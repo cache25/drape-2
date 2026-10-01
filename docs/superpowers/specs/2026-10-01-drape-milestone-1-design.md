@@ -1,6 +1,6 @@
 # Drape — Milestone 1 Design Spec
 
-**Status:** Draft for review
+**Status:** Approved 2026-10-01; amended during Phase A planning (bending constants, seam assembly, dependency versions)
 **Date:** 2026-10-01
 **Owner:** Ian Schory
 **Scope:** Sub-project #1 of the Drape roadmap: pre-made garments draped on a sized avatar, with real fabric physics and high-quality real-time rendering, for Apple Silicon Macs.
@@ -106,7 +106,7 @@ Six CMake libraries. Each has one job and a public header interface; internals c
 | Module | Responsibility | Depends on | Builds on Linux? |
 |---|---|---|---|
 | `drape_core` | Data model, geometry math, units, `.drape` file I/O | Eigen, nlohmann/json, miniz | Yes |
-| `drape_garment` | Parametric pattern generators, spec tables, pattern validation, pattern → sim mesh, initial placement | core, CDT | Yes |
+| `drape_garment` | Parametric pattern generators, spec tables, pattern validation, pattern → sim mesh (the `SimMesh` type itself lives in core, so `drape_sim` needs only core), initial placement | core, CDT | Yes |
 | `drape_avatar` | Base body, shape targets, A-pose, measurement solver, collision field bake | core | Yes |
 | `drape_sim` | Cloth solver: `Solver` interface, `CpuSolver` (reference) and `MetalSolver` (production) | core (+ metal-cpp for the Metal backend) | CPU backend: yes. Metal backend: Mac only |
 | `drape_render` | Filament viewport, materials, lighting, fit-map overlay, capture | core, Filament | Mac only |
@@ -144,7 +144,7 @@ All are cleared for closed-source commercial use.
 | metal-cpp | Apple's official C++ bindings for Metal | Apache 2.0 |
 | MakeHuman base mesh, shape targets, skeleton | Avatar | CC0 |
 | CDT (artem-ogre) | Constrained Delaunay triangulation of pattern pieces | MPL 2.0 |
-| Eigen | Linear algebra | MPL 2.0 |
+| Eigen 3.4 (system package: apt `libeigen3-dev`, Homebrew `eigen`) | Linear algebra | MPL 2.0 |
 | nlohmann/json | JSON | MIT |
 | miniz | ZIP read/write for `.drape` | MIT |
 | GoogleTest | Tests | BSD-3 |
@@ -227,8 +227,8 @@ public:
 - **Strain limiting:** a one-sided hard constraint clamps warp and weft stretch at the fabric's strain limit, so rigid wovens like denim never look rubbery.
 
 **Bending (per interior edge).** Dihedral-angle constraint C = θ − θ₀, where θ₀ = 0 for flat fabric and θ₀ = the fold angle on fold lines.
-- Direction-dependent stiffness: for an edge at angle φ from the warp in pattern space, B(φ) = B_warp · sin²φ + B_weft · cos²φ. Here B_warp is the resistance to bending the warp yarns, which happens when the fold runs across them.
-- Compliance from bending rigidity B (N·m), using the discrete-shells weighting: α = (A₁ + A₂) / (6 · B · |e|²), where A₁ and A₂ are the rest areas of the two adjacent triangles and |e| is the rest edge length.
+- Direction-dependent stiffness: for an edge at angle φ from the warp in pattern space, B(φ) = p · sin²φ + q · cos²φ, with p = (11·B_warp − 3·B_weft) / 8 and q = (9·B_weft − B_warp) / 8, each clamped to at least 0.05 · min(B_warp, B_weft). B_warp is the resistance to bending the warp yarns, which happens when the fold runs across them. On the grain-aligned hexagonal lattice (Section 5.3), these coefficients make the effective bending rigidity along the warp exactly B_warp and along the weft exactly B_weft. The naive law B_warp · sin²φ + B_weft · cos²φ would blend them to 0.75·B_warp + 0.25·B_weft.
+- Compliance from bending rigidity B (N·m): α = (A₁ + A₂) / (2 · B · |e|²), where A₁ and A₂ are the rest areas of the two adjacent triangles and |e| is the rest edge length. The constant 2 makes the discrete hinge energy on the hexagonal lattice equal the continuum bending energy ½·B·κ² for cylindrical bending. The cantilever test (Section 12.2) verifies it.
 
 **Seams.** One zero-rest-length distance constraint per seam vertex pair, plus a dihedral bending constraint across the seam (stiffness = mean of the two fabrics' bending rigidity) so seams don't act as free hinges.
 
@@ -274,8 +274,8 @@ public:
 
 | Phase | Behavior | Ends when |
 |---|---|---|
-| Assembling | Gravity off, extra damping, seam compliance ramps from soft to stiff | Max seam gap < 1 mm, or 3 s simulated |
-| Settling | Gravity on, normal damping | Mean kinetic energy per particle stays below threshold for 1 s simulated |
+| Assembling | Gravity off, extra damping. Each seam pair's rest length shrinks from its starting gap to zero at a fixed closing speed (default 0.25 m/s), so seams close smoothly at a bounded speed | Max seam gap < 1 mm, or 3 s simulated |
+| Settling | Gravity on, normal damping | RMS particle speed stays below 2 mm/s for 1 s simulated (60 frames) |
 | Settled (asleep) | Solver idles to save battery | Any change, or a mouse drag on cloth |
 | Interactive | Normal simulation while the user drags | Drag ends → back to Settling |
 
@@ -561,7 +561,7 @@ Before milestone 1 is called done, two designers who have not seen Drape before 
 ### 13.1 Toolchain
 
 - C++20, CMake with presets, Ninja.
-- Source dependencies pinned to exact versions via CMake FetchContent. Qt comes from the official Qt installer (latest Qt 6 LTS). Filament comes from its official prebuilt macOS release (pinned).
+- Source dependencies pinned to exact versions via CMake FetchContent: nlohmann/json v3.12.0, miniz 3.1.0, GoogleTest v1.17.0, CDT 1.4.5. Eigen 3.4 comes from the system package manager (apt on Linux, Homebrew on Mac). Qt comes from the official Qt installer (latest Qt 6 LTS). Filament comes from its official prebuilt macOS release (pinned).
 - **Targets:** macOS 14+ on arm64 for the app. Linux x86-64 for the portable modules (development and CI only).
 
 ### 13.2 Workflow
