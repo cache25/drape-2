@@ -4,6 +4,9 @@
 #include <cmath>
 #include <stdexcept>
 
+#include <map>
+
+#include "bending.hpp"
 #include "coloring.hpp"
 #include "stretch.hpp"
 
@@ -53,7 +56,19 @@ struct CpuSolver::Impl {
   // Per-vertex incident stretch elements (CSR): incStretch[incStretchStart[i] .. incStretchStart[i+1]).
   std::vector<std::uint32_t> incStretchStart;
   std::vector<std::pair<std::uint32_t, std::uint8_t>> incStretch;  // (element, local vertex)
+  std::vector<Hinge> hinges;
+  std::vector<std::uint32_t> hingeFabricPiece;  // fabric index per hinge (for updateFabric)
+  std::vector<std::array<double, 2>> hingeGeom;  // per hinge: |e|^2/(A1+A2), and the edge's bend coefficient selector
+  std::vector<Vec2d> hingeEdgeDir, hingeGrain;
+  std::vector<std::uint32_t> incHingeStart;
+  std::vector<std::pair<std::uint32_t, std::uint8_t>> incHinge;  // (hinge, local vertex)
   std::vector<std::vector<std::uint32_t>> colors;  // vertices per color
+
+  float hingeStiffness(std::size_t hgi) const {
+    const auto& f = fabrics[hingeFabricPiece[hgi]];
+    const double B = edgeBendStiffness(bendingCoefficients(f.bendWarp, f.bendWeft), hingeEdgeDir[hgi], hingeGrain[hgi]);
+    return static_cast<float>(B * hingeGeom[hgi][0]);
+  }
 
   std::size_t garmentIndex(const GarmentId& id) const {
     for (std::size_t i = 0; i < garments.size(); ++i)
@@ -76,6 +91,10 @@ struct CpuSolver::Impl {
       const auto& [e, local] = incStretch[k];
       accumulateStretch(stretch[e], local, x, fabrics[stretch[e].fabric], limitScale, force, hessian);
     }
+    for (std::uint32_t k = incHingeStart[i]; k < incHingeStart[i + 1]; ++k) {
+      const auto& [hg, local] = incHinge[k];
+      accumulateHinge(hinges[hg], local, x, force, hessian);
+    }
     const Vec3f dx = hessian.ldlt().solve(force);
     if (dx.allFinite()) x[i] += dx;
   }
@@ -90,7 +109,10 @@ struct CpuSolver::Impl {
       if (w[i] == 0.0f) continue;
       const Vec3f g = garments[pGarment[i]].phase == SimPhase::Settling ? gravity : Vec3f::Zero();
       y[i] = x[i] + h * v[i] + h * h * (g + w[i] * fExt[i]);
-      x[i] = x[i] + h * v[i] + h * h * g;  // initial guess leaves out external loads
+      // Initial guess leaves out all accelerations (gravity and loads stay in the inertia target y): at rest
+      // the guess is then the equilibrium itself, so partial iterations cannot bias the resting shape.
+      // (VBD's adaptive guess, gravity scaled by last substep's acceleration, oscillated on hanging cloth.)
+      x[i] = x[i] + h * v[i];
     }
     for (int it = 0; it < iterations; ++it) {
       for (const auto& color : colors) {
@@ -158,6 +180,39 @@ void CpuSolver::build(const SimScene& scene) {
       next.stretch.push_back(e);
       triItems.push_back({e.v[0], e.v[1], e.v[2], kNoParticle});
     }
+    // Hinges: one per interior edge shared by two triangles of the same piece.
+    std::map<std::pair<std::uint32_t, std::uint32_t>, std::vector<std::uint32_t>> edgeTris;
+    for (std::uint32_t t = 0; t < sg.mesh.triangles.size(); ++t) {
+      const auto& tri = sg.mesh.triangles[t];
+      for (int k = 0; k < 3; ++k) edgeTris[std::minmax(tri[k], tri[(k + 1) % 3])].push_back(t);
+    }
+    auto triArea = [&](std::uint32_t t) {
+      const auto& tri = sg.mesh.triangles[t];
+      const Vec2d a = sg.mesh.rest[tri[1]] - sg.mesh.rest[tri[0]];
+      const Vec2d b = sg.mesh.rest[tri[2]] - sg.mesh.rest[tri[0]];
+      return 0.5 * std::abs(a.x() * b.y() - a.y() * b.x());
+    };
+    auto opposite = [&](std::uint32_t t, std::uint32_t e0, std::uint32_t e1) {
+      for (auto vtx : sg.mesh.triangles[t])
+        if (vtx != e0 && vtx != e1) return vtx;
+      return e0;
+    };
+    for (const auto& [edge, tris] : edgeTris) {
+      if (tris.size() != 2) continue;
+      if (sg.mesh.trianglePiece[tris[0]] != sg.mesh.trianglePiece[tris[1]]) continue;
+      const auto piece = sg.mesh.trianglePiece[tris[0]];
+      const Vec2d d = sg.mesh.rest[edge.second] - sg.mesh.rest[edge.first];
+      Hinge hg;
+      hg.v = {g.range.offset + opposite(tris[0], edge.first, edge.second),
+              g.range.offset + opposite(tris[1], edge.first, edge.second), g.range.offset + edge.first,
+              g.range.offset + edge.second};
+      next.hinges.push_back(hg);
+      next.hingeFabricPiece.push_back(g.fabricOffset + piece);
+      next.hingeGeom.push_back({d.squaredNorm() / (triArea(tris[0]) + triArea(tris[1])), 0.0});
+      next.hingeEdgeDir.push_back(d);
+      next.hingeGrain.push_back(sg.mesh.pieceGrain[piece]);
+      triItems.push_back(hg.v);
+    }
     next.garments.push_back(g);
   }
   const std::size_t n = next.x.size();
@@ -189,6 +244,17 @@ void CpuSolver::build(const SimScene& scene) {
     for (std::uint32_t e = 0; e < next.stretch.size(); ++e)
       for (std::uint8_t k = 0; k < 3; ++k) next.incStretch[fill[next.stretch[e].v[k]]++] = {e, k};
   }
+  for (std::size_t hgi = 0; hgi < next.hinges.size(); ++hgi) next.hinges[hgi].K = next.hingeStiffness(hgi);
+  next.incHingeStart.assign(n + 1, 0);
+  for (const auto& hg : next.hinges)
+    for (auto vtx : hg.v) ++next.incHingeStart[vtx + 1];
+  for (std::size_t i = 0; i < n; ++i) next.incHingeStart[i + 1] += next.incHingeStart[i];
+  next.incHinge.resize(next.incHingeStart[n]);
+  {
+    std::vector<std::uint32_t> fill(next.incHingeStart.begin(), next.incHingeStart.end() - 1);
+    for (std::uint32_t h = 0; h < next.hinges.size(); ++h)
+      for (std::uint8_t k = 0; k < 4; ++k) next.incHinge[fill[next.hinges[h].v[k]]++] = {h, k};
+  }
   next.colors = greedyVertexColor(triItems, static_cast<std::uint32_t>(n));
   *impl_ = std::move(next);
 }
@@ -198,6 +264,10 @@ void CpuSolver::updateFabric(const GarmentId& id, const std::vector<FabricPhysic
   if (pieceFabric.size() != g.pieceCount) throw std::invalid_argument("one fabric per pattern piece required");
   std::copy(pieceFabric.begin(), pieceFabric.end(), impl_->fabrics.begin() + g.fabricOffset);
   for (std::uint32_t i = g.range.offset; i < g.range.offset + g.range.count; ++i) impl_->updateMass(i);
+  for (std::size_t hgi = 0; hgi < impl_->hinges.size(); ++hgi) {
+    const auto fi = impl_->hingeFabricPiece[hgi];
+    if (fi >= g.fabricOffset && fi < g.fabricOffset + g.pieceCount) impl_->hinges[hgi].K = impl_->hingeStiffness(hgi);
+  }
 }
 
 void CpuSolver::setPhase(const GarmentId& id, SimPhase phase) {
