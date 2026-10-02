@@ -8,6 +8,7 @@
 
 #include "bending.hpp"
 #include "coloring.hpp"
+#include "seams.hpp"
 #include "stretch.hpp"
 
 namespace drape::sim {
@@ -56,18 +57,34 @@ struct CpuSolver::Impl {
   // Per-vertex incident stretch elements (CSR): incStretch[incStretchStart[i] .. incStretchStart[i+1]).
   std::vector<std::uint32_t> incStretchStart;
   std::vector<std::pair<std::uint32_t, std::uint8_t>> incStretch;  // (element, local vertex)
+  // Hinges (interior edges and seam hinges). Stiffness = mean of the two sides' B(phi) x |e|^2/(A1+A2).
+  struct HingeSide {
+    std::uint32_t fabric = 0;
+    Vec2d edgeDir{1, 0}, grain{0, 1};
+  };
   std::vector<Hinge> hinges;
-  std::vector<std::uint32_t> hingeFabricPiece;  // fabric index per hinge (for updateFabric)
-  std::vector<std::array<double, 2>> hingeGeom;  // per hinge: |e|^2/(A1+A2), and the edge's bend coefficient selector
-  std::vector<Vec2d> hingeEdgeDir, hingeGrain;
+  std::vector<std::array<HingeSide, 2>> hingeSides;
+  std::vector<double> hingeGeom;  // |e|^2 / (A1 + A2)
+  std::vector<SeamSpring> seams;
+  std::vector<std::uint32_t> incSeamStart;
+  std::vector<std::pair<std::uint32_t, std::uint8_t>> incSeam;  // (spring, side)
   std::vector<std::uint32_t> incHingeStart;
   std::vector<std::pair<std::uint32_t, std::uint8_t>> incHinge;  // (hinge, local vertex)
   std::vector<std::vector<std::uint32_t>> colors;  // vertices per color
 
   float hingeStiffness(std::size_t hgi) const {
-    const auto& f = fabrics[hingeFabricPiece[hgi]];
-    const double B = edgeBendStiffness(bendingCoefficients(f.bendWarp, f.bendWeft), hingeEdgeDir[hgi], hingeGrain[hgi]);
-    return static_cast<float>(B * hingeGeom[hgi][0]);
+    double B = 0;
+    for (const auto& side : hingeSides[hgi]) {
+      const auto& f = fabrics[side.fabric];
+      B += 0.5 * edgeBendStiffness(bendingCoefficients(f.bendWarp, f.bendWeft), side.edgeDir, side.grain);
+    }
+    return static_cast<float>(B * hingeGeom[hgi]);
+  }
+
+  float seamTarget(const SeamSpring& sp) const {
+    const auto& g = garments[sp.garment];
+    if (g.phase != SimPhase::Assembling) return 0.0f;
+    return static_cast<float>(std::max(0.0, sp.startGap - settings.assemblyClosingSpeed * g.assemblyTime));
   }
 
   std::size_t garmentIndex(const GarmentId& id) const {
@@ -94,6 +111,11 @@ struct CpuSolver::Impl {
     for (std::uint32_t k = incHingeStart[i]; k < incHingeStart[i + 1]; ++k) {
       const auto& [hg, local] = incHinge[k];
       accumulateHinge(hinges[hg], local, x, force, hessian);
+    }
+    const float seamK = static_cast<float>(settings.seamStiffness);
+    for (std::uint32_t k = incSeamStart[i]; k < incSeamStart[i + 1]; ++k) {
+      const auto& [sp, side] = incSeam[k];
+      accumulateSeam(seams[sp], side, seamTarget(seams[sp]), seamK, x, force, hessian);
     }
     const Vec3f dx = hessian.ldlt().solve(force);
     if (dx.allFinite()) x[i] += dx;
@@ -207,10 +229,42 @@ void CpuSolver::build(const SimScene& scene) {
               g.range.offset + opposite(tris[1], edge.first, edge.second), g.range.offset + edge.first,
               g.range.offset + edge.second};
       next.hinges.push_back(hg);
-      next.hingeFabricPiece.push_back(g.fabricOffset + piece);
-      next.hingeGeom.push_back({d.squaredNorm() / (triArea(tris[0]) + triArea(tris[1])), 0.0});
-      next.hingeEdgeDir.push_back(d);
-      next.hingeGrain.push_back(sg.mesh.pieceGrain[piece]);
+      const Impl::HingeSide side{g.fabricOffset + piece, d, sg.mesh.pieceGrain[piece]};
+      next.hingeSides.push_back({side, side});
+      next.hingeGeom.push_back(d.squaredNorm() / (triArea(tris[0]) + triArea(tris[1])));
+      triItems.push_back(hg.v);
+    }
+    // Seam springs, and seam hinges across consecutive pairs so seams do not act as free hinges.
+    auto triangleWithEdge = [&](std::uint32_t e0, std::uint32_t e1) -> std::int64_t {
+      auto it = edgeTris.find(std::minmax(e0, e1));
+      return (it == edgeTris.end() || it->second.size() != 1) ? -1 : it->second[0];
+    };
+    for (std::size_t k = 0; k < sg.mesh.seamPairs.size(); ++k) {
+      const auto& sp = sg.mesh.seamPairs[k];
+      SeamSpring spring;
+      spring.a = g.range.offset + sp.a;
+      spring.b = g.range.offset + sp.b;
+      spring.garment = gi;
+      spring.startGap = static_cast<float>((sg.initialPositions[sp.a] - sg.initialPositions[sp.b]).norm());
+      next.seams.push_back(spring);
+      triItems.push_back({spring.a, spring.b, kNoParticle, kNoParticle});
+      if (k + 1 >= sg.mesh.seamPairs.size() || sg.mesh.seamPairs[k + 1].seam != sp.seam) continue;
+      const auto& nx = sg.mesh.seamPairs[k + 1];
+      const auto tA = triangleWithEdge(sp.a, nx.a);
+      const auto tB = triangleWithEdge(sp.b, nx.b);
+      if (tA < 0 || tB < 0) continue;
+      const auto pieceA = sg.mesh.trianglePiece[tA], pieceB = sg.mesh.trianglePiece[tB];
+      const Vec2d dA = sg.mesh.rest[nx.a] - sg.mesh.rest[sp.a];
+      const Vec2d dB = sg.mesh.rest[nx.b] - sg.mesh.rest[sp.b];
+      Hinge hg;
+      hg.v = {g.range.offset + opposite(static_cast<std::uint32_t>(tA), sp.a, nx.a),
+              g.range.offset + opposite(static_cast<std::uint32_t>(tB), sp.b, nx.b), g.range.offset + sp.a,
+              g.range.offset + nx.a};
+      next.hinges.push_back(hg);
+      next.hingeSides.push_back({Impl::HingeSide{g.fabricOffset + pieceA, dA, sg.mesh.pieceGrain[pieceA]},
+                                 Impl::HingeSide{g.fabricOffset + pieceB, dB, sg.mesh.pieceGrain[pieceB]}});
+      next.hingeGeom.push_back(dA.squaredNorm() /
+                               (triArea(static_cast<std::uint32_t>(tA)) + triArea(static_cast<std::uint32_t>(tB))));
       triItems.push_back(hg.v);
     }
     next.garments.push_back(g);
@@ -255,6 +309,20 @@ void CpuSolver::build(const SimScene& scene) {
     for (std::uint32_t h = 0; h < next.hinges.size(); ++h)
       for (std::uint8_t k = 0; k < 4; ++k) next.incHinge[fill[next.hinges[h].v[k]]++] = {h, k};
   }
+  next.incSeamStart.assign(n + 1, 0);
+  for (const auto& sp : next.seams) {
+    ++next.incSeamStart[sp.a + 1];
+    ++next.incSeamStart[sp.b + 1];
+  }
+  for (std::size_t i = 0; i < n; ++i) next.incSeamStart[i + 1] += next.incSeamStart[i];
+  next.incSeam.resize(next.incSeamStart[n]);
+  {
+    std::vector<std::uint32_t> fill(next.incSeamStart.begin(), next.incSeamStart.end() - 1);
+    for (std::uint32_t k = 0; k < next.seams.size(); ++k) {
+      next.incSeam[fill[next.seams[k].a]++] = {k, 0};
+      next.incSeam[fill[next.seams[k].b]++] = {k, 1};
+    }
+  }
   next.colors = greedyVertexColor(triItems, static_cast<std::uint32_t>(n));
   *impl_ = std::move(next);
 }
@@ -265,15 +333,21 @@ void CpuSolver::updateFabric(const GarmentId& id, const std::vector<FabricPhysic
   std::copy(pieceFabric.begin(), pieceFabric.end(), impl_->fabrics.begin() + g.fabricOffset);
   for (std::uint32_t i = g.range.offset; i < g.range.offset + g.range.count; ++i) impl_->updateMass(i);
   for (std::size_t hgi = 0; hgi < impl_->hinges.size(); ++hgi) {
-    const auto fi = impl_->hingeFabricPiece[hgi];
+    const auto fi = impl_->hingeSides[hgi][0].fabric;
     if (fi >= g.fabricOffset && fi < g.fabricOffset + g.pieceCount) impl_->hinges[hgi].K = impl_->hingeStiffness(hgi);
   }
 }
 
 void CpuSolver::setPhase(const GarmentId& id, SimPhase phase) {
-  auto& g = impl_->garments[impl_->garmentIndex(id)];
+  const auto gi = impl_->garmentIndex(id);
+  auto& g = impl_->garments[gi];
   g.phase = phase;
-  if (phase == SimPhase::Assembling) g.assemblyTime = 0;
+  if (phase == SimPhase::Assembling) {
+    g.assemblyTime = 0;
+    for (auto& sp : impl_->seams) {
+      if (sp.garment == gi) sp.startGap = (impl_->x[sp.a] - impl_->x[sp.b]).norm();
+    }
+  }
 }
 
 void CpuSolver::step(const StepInput& in) {
@@ -302,6 +376,7 @@ SimStats CpuSolver::stats() const {
     ++moving;
   }
   st.rmsSpeed = moving ? std::sqrt(sumV2 / static_cast<double>(moving)) : 0.0;
+  for (const auto& sp : s.seams) st.maxSeamGap = std::max(st.maxSeamGap, static_cast<double>((s.x[sp.a] - s.x[sp.b]).norm()));
   return st;
 }
 
@@ -313,6 +388,7 @@ Snapshot CpuSolver::snapshot() const {
     snap.phases.push_back(g.phase);
     snap.assemblyTime.push_back(g.assemblyTime);
   }
+  for (const auto& sp : impl_->seams) snap.seamStartGap.push_back(sp.startGap);
   return snap;
 }
 
@@ -328,6 +404,9 @@ void CpuSolver::restore(const Snapshot& snap) {
   for (std::size_t i = 0; i < s.garments.size(); ++i) {
     s.garments[i].phase = snap.phases[i];
     s.garments[i].assemblyTime = snap.assemblyTime[i];
+  }
+  if (snap.seamStartGap.size() == s.seams.size()) {
+    for (std::size_t k = 0; k < s.seams.size(); ++k) s.seams[k].startGap = snap.seamStartGap[k];
   }
 }
 
