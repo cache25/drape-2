@@ -57,3 +57,11 @@ TEST(TestBody, ComponentsAndRegions) {
     EXPECT_NEAR(c.e1().dot(c.e0), 0.0, 1e-12);
   }
 }
+
+TEST(Primitives, BoxIsClosed) {
+  const Mat3d rot = Eigen::AngleAxisd(0.3, Vec3d(0, 0, 1)).toRotationMatrix();
+  const TriangleMesh b = box({0.1, 0.2, 0.3}, {0.5, 0.05, 0.25}, rot);
+  EXPECT_EQ(b.triangles.size(), 12u);
+  EXPECT_TRUE(isClosedManifold(b));
+  EXPECT_NEAR(signedVolume(b), 8 * 0.5 * 0.05 * 0.25, 1e-12);
+}

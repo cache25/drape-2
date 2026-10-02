@@ -1,6 +1,6 @@
 # Drape — Milestone 1 Design Spec
 
-**Status:** Approved 2026-10-01; amended during Phase A planning (bending constants, seam assembly, dependency versions) and Phase A execution (solver method XPBD → VBD, Section 5.1)
+**Status:** Approved 2026-10-01; amended during Phase A planning (bending constants, seam assembly, dependency versions) and Phase A execution (solver method XPBD → implicit Newton–CG, Section 5.1; bending constants re-measured, Section 5.4)
 **Date:** 2026-10-01
 **Owner:** Ian Schory
 **Scope:** Sub-project #1 of the Drape roadmap: pre-made garments draped on a sized avatar, with real fabric physics and high-quality real-time rendering, for Apple Silicon Macs.
@@ -179,15 +179,24 @@ The generated `Pattern` is **stored in the project**. Reopening a project uses t
 
 ### 5.1 Method
 
-**Vertex Block Descent (VBD)** (Chen, Macklin et al., "Vertex Block Descent", ACM TOG 2024). Each simulation frame advances 1/60 s of simulated time, split into S substeps. Each substep minimizes the implicit-Euler energy, inertia plus every constraint energy, with I iterations of per-vertex Newton steps: one 3×3 solve per vertex using the Gauss–Newton Hessian of its incident energies. Vertices are processed color by color, so each color can run in parallel on the GPU. Every constraint in Section 5.4 is an energy ½·K·C², with stiffness K = 1/α taken from the compliance formulas there.
+**Implicit Euler solved by Newton's method.** Each simulation frame advances 1/60 s of simulated time, split into S substeps. Each substep minimizes the implicit-Euler energy, inertia plus every constraint energy in Section 5.4 (each written ½·K·C², with stiffness K = 1/α from the compliance formulas there), using N Newton iterations. Each Newton iteration:
+- assembles the gradient and a positive semi-definite block-sparse Hessian (Gauss–Newton terms plus tension stiffness for stretched warp, weft and seams);
+- solves the linear system with conjugate gradients, preconditioned by each vertex's 3×3 diagonal block, to a relative residual of 10⁻² or 50 iterations (inexact Newton);
+- applies a backtracking line search on the total energy.
 
-*Why not XPBD (the original choice):* with one iteration per substep, XPBD's resting state carries a stretch error of about (c·h/ℓ)² times the true strain, where c is the fabric's stretch-wave speed, h the substep and ℓ the edge length. At our quality settings that makes every fabric sag about 5% under its own weight, whatever its stiffness. Phase A's stretch test measured 137% strain where 2.5% is correct. VBD's resting state is the true static equilibrium. The same test lands within 0.4%.
+The initial guess is x + h·v, leaving gravity and loads only in the inertia target, so a resting garment starts exactly at its equilibrium. This is the classic garment-CAD formulation (Baraff & Witkin 1998). Conjugate gradients and sparse matrix–vector products map directly onto the GPU in Phase B.
 
-| Quality | Particle distance | Default substeps × iterations per frame |
+*Why not the methods tried first.* Phase A's physics tests rejected two alternatives:
+- **XPBD** (one iteration per substep) carries a resting stretch error of about (c·h/ℓ)² times the true strain, where c is the stretch-wave speed, h the substep and ℓ the edge length. Every fabric would sag ~5% under its own weight: a test strip measured 137% strain where 2.5% is correct.
+- **Vertex Block Descent** (per-vertex Newton, Gauss–Seidel order) got statics right. But its local solves cannot move stiff in-plane rigid modes: a patch on a 20° slope with friction 0.2 never slid, and seams could not translate whole pieces during assembly.
+
+The Newton–CG solver passes all of these tests: strip strain within 0.4%, cantilever rigidity within 8%, and correct sliding.
+
+| Quality | Particle distance | Default substeps × Newton iterations per frame |
 |---|---|---|
-| Draft | 20 mm | 2 × 5 |
-| Standard | 10 mm | 2 × 10 |
-| Fine | 5 mm | 4 × 10 |
+| Draft | 20 mm | 1 × 1 |
+| Standard | 10 mm | 1 × 2 |
+| Fine | 5 mm | 2 × 2 |
 
 These defaults may be retuned during implementation. The physics tests in Section 12.2 are the authority on whether a value is acceptable.
 
@@ -208,7 +217,7 @@ public:
 };
 ```
 
-`CpuSolver` and `MetalSolver` implement the same interface and the same algorithm. Vertices are partitioned by **graph coloring**, so no two vertices that share an energy term have the same color. Each color is solved in parallel on the GPU, and the CPU solver processes the colors in the same order. Body collision and pins are applied as position projections after each substep's iterations.
+`CpuSolver` and `MetalSolver` implement the same interface and the same algorithm. The linear algebra (block-sparse matrix–vector products, dot products, vector updates) parallelizes directly on the GPU. Body collision and pins are applied as position projections after each substep's Newton iterations.
 
 ### 5.3 Sim mesh from a pattern (`drape_garment`)
 
@@ -225,7 +234,7 @@ public:
 - Warp: C = |f_u| − 1
 - Weft: C = |f_v| − 1
 - Bias (shear): C = (f_u · f_v) / (|f_u| |f_v|)
-- Compliance α = 1 / (k · A), where k is the fabric stiffness for that direction (N/m) and A is the rest area. The VBD stiffness is K = 1/α = k·A.
+- Compliance α = 1 / (k · A), where k is the fabric stiffness for that direction (N/m) and A is the rest area. The energy stiffness is K = 1/α = k·A.
 - **Strain limiting:** a one-sided stiff energy (100 × the stretch stiffness) caps warp and weft stretch at the fabric's strain limit, so rigid wovens like denim never look rubbery.
 
 **Bending (per interior edge).** Dihedral-angle constraint C = θ − θ₀, where θ₀ = 0 for flat fabric and θ₀ = the fold angle on fold lines.

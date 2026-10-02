@@ -63,12 +63,12 @@ double measuredStrain(const Solver& s, const SimMesh& m) {
 }  // namespace
 
 TEST(CpuSolver, SubstepsForQuality) {
-  EXPECT_EQ(substepsFor(SimQuality::Draft), 2);
-  EXPECT_EQ(substepsFor(SimQuality::Standard), 2);
-  EXPECT_EQ(substepsFor(SimQuality::Fine), 4);
-  EXPECT_EQ(iterationsFor(SimQuality::Draft), 5);
-  EXPECT_EQ(iterationsFor(SimQuality::Standard), 10);
-  EXPECT_EQ(iterationsFor(SimQuality::Fine), 10);
+  EXPECT_EQ(substepsFor(SimQuality::Draft), 1);
+  EXPECT_EQ(substepsFor(SimQuality::Standard), 1);
+  EXPECT_EQ(substepsFor(SimQuality::Fine), 2);
+  EXPECT_EQ(iterationsFor(SimQuality::Draft), 1);
+  EXPECT_EQ(iterationsFor(SimQuality::Standard), 2);
+  EXPECT_EQ(iterationsFor(SimQuality::Fine), 2);
 }
 
 TEST(CpuSolver, FreeFall) {
@@ -80,12 +80,11 @@ TEST(CpuSolver, FreeFall) {
   const auto before = positions(s);
   for (int f = 0; f < 30; ++f) s.step({1.0 / 60.0, 10});
   const auto after = positions(s);
-  // VBD's per-vertex Gauss-Seidel leaves a tiny in-plane drift during free fall (second-order stretch
-  // coupling while neighbours update in turn); 0.1 mm over a 1.2 m fall is physically irrelevant.
+  // Lateral drift bound: the inexact linear solve (1e-2 relative residual) leaves micrometre noise.
   for (std::size_t i = 0; i < before.size(); ++i) {
     EXPECT_NEAR((after[i].y() - before[i].y()) / -1.22625, 1.0, 0.005);
-    EXPECT_NEAR(after[i].x(), before[i].x(), 1e-4);
-    EXPECT_NEAR(after[i].z(), before[i].z(), 1e-4);
+    EXPECT_NEAR(after[i].x(), before[i].x(), 1e-5);
+    EXPECT_NEAR(after[i].z(), before[i].z(), 1e-5);
   }
 }
 
@@ -115,7 +114,7 @@ TEST(CpuSolver, StripStretchWarp) {
   auto scene = stripScene({1, 0}, withDamping(testdata::testJersey(), 1.0));
   CpuSolver s;
   s.build(scene);
-  ASSERT_GT(runUntilStill(s, {1.0 / 60.0, 2, 10}, 1e-5, 60, 30.0), 0);
+  ASSERT_GT(runUntilStill(s, {1.0 / 60.0, 1, 2}, 1e-5, 60, 30.0), 0);
   EXPECT_NEAR(measuredStrain(s, scene.garments[0].mesh), 0.025, 0.05 * 0.025);
 }
 
@@ -123,7 +122,7 @@ TEST(CpuSolver, StripStretchWeft) {
   auto scene = stripScene({0, 1}, withDamping(testdata::testJersey(), 1.0));
   CpuSolver s;
   s.build(scene);
-  ASSERT_GT(runUntilStill(s, {1.0 / 60.0, 2, 10}, 1e-5, 60, 30.0), 0);
+  ASSERT_GT(runUntilStill(s, {1.0 / 60.0, 1, 2}, 1e-5, 60, 30.0), 0);
   EXPECT_NEAR(measuredStrain(s, scene.garments[0].mesh), 0.05, 0.05 * 0.05);
 }
 
@@ -132,10 +131,10 @@ TEST(CpuSolver, UpdateFabricChangesStiffness) {
   auto scene = stripScene({1, 0}, f);
   CpuSolver s;
   s.build(scene);
-  ASSERT_GT(runUntilStill(s, {1.0 / 60.0, 2, 10}, 1e-5, 60, 30.0), 0);
+  ASSERT_GT(runUntilStill(s, {1.0 / 60.0, 1, 2}, 1e-5, 60, 30.0), 0);
   f.stretchWarp = 800;
   s.updateFabric("strip", {f});
-  ASSERT_GT(runUntilStill(s, {1.0 / 60.0, 2, 10}, 1e-5, 60, 30.0), 0);
+  ASSERT_GT(runUntilStill(s, {1.0 / 60.0, 1, 2}, 1e-5, 60, 30.0), 0);
   EXPECT_NEAR(measuredStrain(s, scene.garments[0].mesh), 0.0125, 0.05 * 0.0125);
 }
 

@@ -11,8 +11,6 @@ using namespace drape;
 using namespace drape::sim;
 using namespace drape::sim::testing;
 
-// The cantilever runs 8 substeps x 20 iterations on a 2 mm mesh: bending-dominated statics on a fine mesh
-// converge slowly under per-vertex Gauss-Seidel, so these tests carry the "slow" label.
 namespace {
 
 // Peirce cantilever (spec 12.2 #2): returns |G - B| / B.
@@ -46,7 +44,7 @@ double cantileverError(const FabricPhysical& f, const Vec2d& grain, double B) {
 
   CpuSolver s;
   s.build(scene);
-  EXPECT_GT(runUntilStill(s, {1.0 / 60.0, 8, 20}, 2e-4, 60, 10.0), 0);
+  EXPECT_GT(runUntilStill(s, {1.0 / 60.0, 1, 2}, 2e-4, 60, 10.0), 0);
   const auto x = positions(s);
   Vec3d tip = Vec3d::Zero();
   double tipRest = 0;

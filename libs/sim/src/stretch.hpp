@@ -48,17 +48,4 @@ void evalStretch(const std::array<Eigen::Matrix<S, 3, 1>, 3>& x, const Eigen::Ma
   grad[0] = -(grad[1] + grad[2]);
 }
 
-struct StretchElement {
-  std::array<std::uint32_t, 3> v{};
-  Eigen::Matrix2f dmInv = Eigen::Matrix2f::Identity();
-  float area = 0;
-  std::uint32_t fabric = 0;  // index into the solver's fabric table
-};
-
-// Adds, for vertex `local` (0..2) of the element, the force -dE/dx and the Gauss-Newton Hessian of the
-// element's stretch energies: 1/2 K C^2 for warp, weft and bias (K = k * area), plus the one-sided
-// strain-limit energies (K = limitScale * k * area) when warp or weft stretch exceeds the fabric limit.
-void accumulateStretch(const StretchElement& e, int local, const std::vector<Eigen::Vector3f>& x,
-                       const FabricPhysical& f, float limitScale, Eigen::Vector3f& force, Eigen::Matrix3f& hessian);
-
 }  // namespace drape::sim

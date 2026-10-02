@@ -24,6 +24,8 @@ struct SimSettings {
   double dampingScale = 5.0;            // 1/s per unit of fabric damping
   double strainLimitStiffnessScale = 100.0;  // strain-limit energy stiffness / stretch stiffness
   double seamStiffness = 1e4;           // N/m, seam spring stiffness
+  int maxCgIterations = 50;             // PCG iterations per Newton step (inexact Newton)
+  double cgTolerance = 1e-2;            // relative residual
 };
 
 struct SimGarment {
@@ -54,7 +56,7 @@ struct SimScene {
 struct StepInput {
   double dt = 1.0 / 60.0;
   int substeps = 2;
-  int iterations = 10;  // VBD iterations per substep
+  int iterations = 2;  // Newton iterations per substep
 };
 
 struct SimStats {
@@ -93,7 +95,7 @@ class Solver {
   virtual std::size_t particleCount() const = 0;
 };
 
-int substepsFor(SimQuality q);   // Draft 2, Standard 2, Fine 4
-int iterationsFor(SimQuality q);  // Draft 5, Standard 10, Fine 10
+int substepsFor(SimQuality q);   // Draft 1, Standard 1, Fine 2
+int iterationsFor(SimQuality q);  // Newton iterations: Draft 1, Standard 2, Fine 2
 
 }  // namespace drape::sim

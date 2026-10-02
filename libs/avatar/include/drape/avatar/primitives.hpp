@@ -11,4 +11,7 @@ TriangleMesh capsule(const Vec3d& a, const Vec3d& b, double radius, int segments
 TriangleMesh ellipticCapsule(double yBottom, double yTop, double rx, double rz, double capHeight, int segments = 48,
                              int rings = 12);
 
+// Oriented box: 8 corners, 12 outward triangles.
+TriangleMesh box(const Vec3d& center, const Vec3d& halfExtents, const Mat3d& rotation);
+
 }  // namespace drape::avatar

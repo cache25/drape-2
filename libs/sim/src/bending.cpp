@@ -17,14 +17,4 @@ double edgeBendStiffness(const BendCoefficients& c, const Vec2d& restEdgeDir, co
   return c.p * sinPhi * sinPhi + c.q * cosPhi * cosPhi;
 }
 
-void accumulateHinge(const Hinge& h, int local, const std::vector<Eigen::Vector3f>& x, Eigen::Vector3f& force,
-                     Eigen::Matrix3f& hessian) {
-  const std::array<Eigen::Vector3f, 4> xs{x[h.v[0]], x[h.v[1]], x[h.v[2]], x[h.v[3]]};
-  float theta = 0;
-  std::array<Eigen::Vector3f, 4> g;
-  evalDihedral<float>(xs, theta, g);
-  force -= h.K * (theta - h.restAngle) * g[local];
-  hessian += h.K * g[local] * g[local].transpose();
-}
-
 }  // namespace drape::sim

@@ -26,7 +26,7 @@ double tipDrop(SimGarment g, double tipX) {
   scene.garments.push_back(std::move(g));
   CpuSolver s;
   s.build(scene);
-  EXPECT_GT(runUntilStill(s, {1.0 / 60.0, 8, 20}, 2e-4, 60, 10.0), 0);
+  EXPECT_GT(runUntilStill(s, {1.0 / 60.0, 1, 2}, 2e-4, 60, 10.0), 0);
   const auto x = positions(s);
   double drop = 0;
   for (auto v : tip) drop -= x[v].y();
@@ -35,7 +35,6 @@ double tipDrop(SimGarment g, double tipX) {
 
 }  // namespace
 
-// Slow: cantilever statics (see test_cantilever.cpp).
 TEST(Seams, SeamDoesNotHinge) {
   const auto f = testdata::testStiff();
   const double single = tipDrop(flatGarment("one", garment::rectanglePiece("one", 0.06, 0.02), 0.004, f), 0.06);

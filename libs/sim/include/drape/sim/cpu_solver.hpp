@@ -6,8 +6,9 @@
 
 namespace drape::sim {
 
-// Reference Vertex Block Descent solver (spec 5): per-vertex Newton steps on the implicit-Euler energy,
-// processed by vertex color; float particle state. Deterministic: same inputs, bitwise-identical results.
+// Reference solver (spec 5): implicit Euler, each substep minimized by Newton's method with a
+// block-Jacobi preconditioned conjugate-gradient linear solve and a backtracking line search.
+// Particle state is float; the solve runs in double. Deterministic: same inputs, bitwise-identical results.
 class CpuSolver final : public Solver {
  public:
   CpuSolver();

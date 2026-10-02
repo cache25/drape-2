@@ -50,14 +50,4 @@ void evalDihedral(const std::array<Eigen::Matrix<S, 3, 1>, 4>& x, S& theta,
   grad[3] = ((x[0] - x[2]).dot(E) / elen) * a + ((x[1] - x[2]).dot(E) / elen) * b;
 }
 
-struct Hinge {
-  std::array<std::uint32_t, 4> v{};  // opposite A, opposite B, edge start, edge end
-  float K = 0;                       // B |e|^2 / (A1 + A2)
-  float restAngle = 0;
-};
-
-// Adds the force and Gauss-Newton Hessian of 1/2 K (theta - theta0)^2 for vertex `local` (0..3).
-void accumulateHinge(const Hinge& h, int local, const std::vector<Eigen::Vector3f>& x, Eigen::Vector3f& force,
-                     Eigen::Matrix3f& hessian);
-
 }  // namespace drape::sim

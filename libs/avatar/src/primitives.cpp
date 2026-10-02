@@ -110,4 +110,18 @@ TriangleMesh ellipticCapsule(double yBottom, double yTop, double rx, double rz, 
   return ringSurface({0, yBottom - capHeight, 0}, {0, yTop + capHeight, 0}, 2 * rings, segments, point);
 }
 
+TriangleMesh box(const Vec3d& center, const Vec3d& halfExtents, const Mat3d& rotation) {
+  TriangleMesh m;
+  for (int i = 0; i < 8; ++i) {
+    const Vec3d local((i & 1 ? 1 : -1) * halfExtents.x(), (i & 2 ? 1 : -1) * halfExtents.y(),
+                      (i & 4 ? 1 : -1) * halfExtents.z());
+    m.vertices.push_back(center + rotation * local);
+  }
+  // Two triangles per face (corner index bits: x=1, y=2, z=4).
+  m.triangles = {{0, 2, 3}, {0, 3, 1}, {4, 5, 7}, {4, 7, 6}, {0, 1, 5}, {0, 5, 4},
+                 {2, 6, 7}, {2, 7, 3}, {0, 4, 6}, {0, 6, 2}, {1, 3, 7}, {1, 7, 5}};
+  makeOutward(m);
+  return m;
+}
+
 }  // namespace drape::avatar
