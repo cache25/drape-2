@@ -1,6 +1,6 @@
 # Drape — Milestone 1 Design Spec
 
-**Status:** Approved 2026-10-01; amended during Phase A planning (bending constants, seam assembly, dependency versions)
+**Status:** Approved 2026-10-01; amended during Phase A planning (bending constants, seam assembly, dependency versions) and Phase A execution (solver method XPBD → VBD, Section 5.1)
 **Date:** 2026-10-01
 **Owner:** Ian Schory
 **Scope:** Sub-project #1 of the Drape roadmap: pre-made garments draped on a sized avatar, with real fabric physics and high-quality real-time rendering, for Apple Silicon Macs.
@@ -179,15 +179,17 @@ The generated `Pattern` is **stored in the project**. Reopening a project uses t
 
 ### 5.1 Method
 
-**XPBD (Extended Position-Based Dynamics) with small substeps.** Each simulation frame advances 1/60 s of simulated time, split into N substeps with one constraint iteration each. Following Macklin et al. ("XPBD", 2016; "Small Steps in Physics Simulation", 2019), constraint stiffness is expressed as compliance, so behavior is independent of step count and stable for both stiff and soft fabrics.
+**Vertex Block Descent (VBD)** (Chen, Macklin et al., "Vertex Block Descent", ACM TOG 2024). Each simulation frame advances 1/60 s of simulated time, split into S substeps. Each substep minimizes the implicit-Euler energy, inertia plus every constraint energy, with I iterations of per-vertex Newton steps: one 3×3 solve per vertex using the Gauss–Newton Hessian of its incident energies. Vertices are processed color by color, so each color can run in parallel on the GPU. Every constraint in Section 5.4 is an energy ½·K·C², with stiffness K = 1/α taken from the compliance formulas there.
 
-| Quality | Particle distance | Default substeps per frame |
+*Why not XPBD (the original choice):* with one iteration per substep, XPBD's resting state carries a stretch error of about (c·h/ℓ)² times the true strain, where c is the fabric's stretch-wave speed, h the substep and ℓ the edge length. At our quality settings that makes every fabric sag about 5% under its own weight, whatever its stiffness. Phase A's stretch test measured 137% strain where 2.5% is correct. VBD's resting state is the true static equilibrium. The same test lands within 0.4%.
+
+| Quality | Particle distance | Default substeps × iterations per frame |
 |---|---|---|
-| Draft | 20 mm | 10 |
-| Standard | 10 mm | 20 |
-| Fine | 5 mm | 30 |
+| Draft | 20 mm | 2 × 5 |
+| Standard | 10 mm | 2 × 10 |
+| Fine | 5 mm | 4 × 10 |
 
-Substep defaults may be retuned during implementation. The physics tests in Section 12.2 are the authority on whether a value is acceptable.
+These defaults may be retuned during implementation. The physics tests in Section 12.2 are the authority on whether a value is acceptable.
 
 ### 5.2 Solver interface
 
@@ -206,7 +208,7 @@ public:
 };
 ```
 
-`CpuSolver` and `MetalSolver` implement the same interface and the same algorithm. Constraints are partitioned by **graph coloring**: each color is solved in parallel on the GPU, and the CPU solver processes the colors in the same order. Collision constraints use Jacobi updates with averaging.
+`CpuSolver` and `MetalSolver` implement the same interface and the same algorithm. Vertices are partitioned by **graph coloring**, so no two vertices that share an energy term have the same color. Each color is solved in parallel on the GPU, and the CPU solver processes the colors in the same order. Body collision and pins are applied as position projections after each substep's iterations.
 
 ### 5.3 Sim mesh from a pattern (`drape_garment`)
 
@@ -223,14 +225,14 @@ public:
 - Warp: C = |f_u| − 1
 - Weft: C = |f_v| − 1
 - Bias (shear): C = (f_u · f_v) / (|f_u| |f_v|)
-- Compliance α = 1 / (k · A), where k is the fabric stiffness for that direction (N/m) and A is the rest area.
-- **Strain limiting:** a one-sided hard constraint clamps warp and weft stretch at the fabric's strain limit, so rigid wovens like denim never look rubbery.
+- Compliance α = 1 / (k · A), where k is the fabric stiffness for that direction (N/m) and A is the rest area. The VBD stiffness is K = 1/α = k·A.
+- **Strain limiting:** a one-sided stiff energy (100 × the stretch stiffness) caps warp and weft stretch at the fabric's strain limit, so rigid wovens like denim never look rubbery.
 
 **Bending (per interior edge).** Dihedral-angle constraint C = θ − θ₀, where θ₀ = 0 for flat fabric and θ₀ = the fold angle on fold lines.
 - Direction-dependent stiffness: for an edge at angle φ from the warp in pattern space, B(φ) = p · sin²φ + q · cos²φ, with p = (11·B_warp − 3·B_weft) / 8 and q = (9·B_weft − B_warp) / 8, each clamped to at least 0.05 · min(B_warp, B_weft). B_warp is the resistance to bending the warp yarns, which happens when the fold runs across them. On the grain-aligned hexagonal lattice (Section 5.3), these coefficients make the effective bending rigidity along the warp exactly B_warp and along the weft exactly B_weft. The naive law B_warp · sin²φ + B_weft · cos²φ would blend them to 0.75·B_warp + 0.25·B_weft.
 - Compliance from bending rigidity B (N·m): α = (A₁ + A₂) / (2 · B · |e|²), where A₁ and A₂ are the rest areas of the two adjacent triangles and |e| is the rest edge length. The constant 2 makes the discrete hinge energy on the hexagonal lattice equal the continuum bending energy ½·B·κ² for cylindrical bending. The cantilever test (Section 12.2) verifies it.
 
-**Seams.** One zero-rest-length distance constraint per seam vertex pair, plus a dihedral bending constraint across the seam (stiffness = mean of the two fabrics' bending rigidity) so seams don't act as free hinges.
+**Seams.** One stiff one-sided spring per seam vertex pair (energy ½·K_seam·(|x_a − x_b| − L)² when the gap exceeds L; K_seam defaults to 10⁴ N/m), plus a dihedral bending constraint across the seam (stiffness = mean of the two fabrics' bending rigidity) so seams don't act as free hinges.
 
 **Elastic.** Elastic pieces (waistbands, cuffs, beanie rib) carry a contraction factor s ∈ [0.5, 1] along a direction (default: the band's length). Their 2D rest shape is scaled by s along that direction before the constraints are built.
 
