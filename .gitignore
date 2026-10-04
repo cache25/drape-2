@@ -1,3 +1,4 @@
 build/
 out/
 .superpowers/
+__pycache__/
