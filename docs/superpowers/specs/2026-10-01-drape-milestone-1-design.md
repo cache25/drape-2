@@ -194,11 +194,11 @@ The Newton–CG solver passes all of these tests: strip strain within 0.4%, cant
 
 | Quality | Particle distance | Default substeps × Newton iterations per frame |
 |---|---|---|
-| Draft | 20 mm | 1 × 1 |
+| Draft | 20 mm | 1 × 2 |
 | Standard | 10 mm | 1 × 2 |
 | Fine | 5 mm | 2 × 2 |
 
-These defaults may be retuned during implementation. The physics tests in Section 12.2 are the authority on whether a value is acceptable.
+These defaults may be retuned during implementation. The physics tests in Section 12.2 are the authority on whether a value is acceptable. Two Newton iterations is the floor: with one (linearly implicit Euler), a hanging sheet with no contact at all kept moving at ~7 mm/s indefinitely, even with exact linear solves, while two iterations brought it to rest.
 
 ### 5.2 Solver interface
 
@@ -266,7 +266,9 @@ public:
 
 **Body.** A signed distance field (SDF) is baked from the avatar on a regular grid at ≤ 4 mm resolution, padded 5 cm around the body, and sampled trilinearly.
 - Constraint: φ(x) ≥ r, where r = collision offset (default 3 mm) + thickness / 2.
-- Positional friction uses the fabric's friction coefficient.
+- **Contact is part of the implicit solve.** Each substep, a particle within 1 cm of r gets the tangent plane of the SDF at its substep-start position. At the start of each Newton iteration, a particle below its plane, or less than 0.5 mm above it, is held on the plane: it is projected onto it, and the conjugate-gradient solve is filtered so the Newton step keeps it there (Baraff & Witkin 1998). A held particle whose other forces pull it away from the body is released. The normal force is read from the solve's residual.
+- **Friction** uses the fabric's friction coefficient μ as smoothed Coulomb friction inside the same solve (Li et al. 2020, IPC): energy μ·λ·f₀(|u|), where u is the tangential motion this substep, λ the latest normal force (previous Newton iteration, or previous substep), and f₀ rises smoothly to the full force μ·λ at a slip of 0.3 mm/s × h. A resting particle can creep at most 0.3 mm/s.
+- After the solve, only a particle that still ends more than 0.5 mm below r is pushed out, with positional friction. *Why not project every particle afterwards:* that was the first design, and it kept garments from ever settling. The solve did not know about the body, so contact forces fought a projection every substep, and the SDF's interpolation error divided by h kicked resting cloth at a few mm/s. An accurate linear solve also pulled a whole tee through the torso, because nothing in the solve resisted it.
 - Contact impulses are accumulated per particle to drive the Pressure fit map.
 
 **Self (cloth vs. cloth, including across garments in an outfit).** Discrete vertex–triangle proximity with thickness d = max(fabric thickness, 1.5 mm).

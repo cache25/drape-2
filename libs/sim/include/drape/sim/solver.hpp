@@ -24,6 +24,7 @@ struct SimSettings {
   double dampingScale = 5.0;            // 1/s per unit of fabric damping
   double strainLimitStiffnessScale = 100.0;  // strain-limit energy stiffness / stretch stiffness
   double seamStiffness = 1e4;           // N/m, seam spring stiffness
+  double frictionSlipSpeed = 3e-4;      // m/s, slip speed at which body friction reaches mu * normal force
   int maxCgIterations = 50;             // PCG iterations per Newton step (inexact Newton)
   double cgTolerance = 1e-2;            // relative residual
 };
@@ -96,6 +97,6 @@ class Solver {
 };
 
 int substepsFor(SimQuality q);   // Draft 1, Standard 1, Fine 2
-int iterationsFor(SimQuality q);  // Newton iterations: Draft 1, Standard 2, Fine 2
+int iterationsFor(SimQuality q);  // Newton iterations: Draft 2, Standard 2, Fine 2
 
 }  // namespace drape::sim

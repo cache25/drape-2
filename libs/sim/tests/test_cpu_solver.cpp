@@ -66,7 +66,7 @@ TEST(CpuSolver, SubstepsForQuality) {
   EXPECT_EQ(substepsFor(SimQuality::Draft), 1);
   EXPECT_EQ(substepsFor(SimQuality::Standard), 1);
   EXPECT_EQ(substepsFor(SimQuality::Fine), 2);
-  EXPECT_EQ(iterationsFor(SimQuality::Draft), 1);
+  EXPECT_EQ(iterationsFor(SimQuality::Draft), 2);  // one Newton iteration never brings cloth to rest
   EXPECT_EQ(iterationsFor(SimQuality::Standard), 2);
   EXPECT_EQ(iterationsFor(SimQuality::Fine), 2);
 }

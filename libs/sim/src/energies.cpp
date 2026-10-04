@@ -90,4 +90,23 @@ void evalSeamTerm(const std::array<V3, 2>& x, double target, double K, TermEval<
   out.hess[1][0] -= block;
 }
 
+void evalFrictionTerm(const V3& x, const V3& x0, const V3& n, double muLambda, double eps, TermEval<1>& out) {
+  if (muLambda <= 0 || eps <= 0) return;
+  const M3 P = M3::Identity() - n * n.transpose();
+  const V3 u = P * (x - x0);
+  const double s = u.norm();
+  if (s < eps) {
+    out.energy += muLambda * (-s * s * s / (3 * eps * eps) + s * s / eps + eps / 3);
+    const double f1OverS = 2 / eps - s / (eps * eps);  // f0'(s) / s
+    out.grad[0] += muLambda * f1OverS * u;
+    out.hess[0][0] += muLambda * f1OverS * P;
+    if (s > 0) out.hess[0][0] -= muLambda / (eps * eps * s) * u * u.transpose();
+  } else {
+    const V3 dir = u / s;
+    out.energy += muLambda * s;
+    out.grad[0] += muLambda * dir;
+    out.hess[0][0] += muLambda / s * (P - dir * dir.transpose());
+  }
+}
+
 }  // namespace drape::sim

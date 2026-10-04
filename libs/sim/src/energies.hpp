@@ -50,4 +50,9 @@ void evalHingeTerm(const HingeTerm& t, const std::array<V3, 4>& x, TermEval<4>& 
 // One-sided spring 1/2 K (d - target)^2 for d > target between x[0] and x[1].
 void evalSeamTerm(const std::array<V3, 2>& x, double target, double K, TermEval<2>& out);
 
+// Smoothed Coulomb friction for one particle in contact (Li et al. 2020, IPC): D = muLambda * f0(|u|) with
+// u = (I - n n^T)(x - x0). f0 is C1: quadratic-cubic below the slip length eps, |u| above it, so the force grows
+// to muLambda over eps and stays there while sliding. The Hessian is the exact one, which is PSD.
+void evalFrictionTerm(const V3& x, const V3& x0, const V3& n, double muLambda, double eps, TermEval<1>& out);
+
 }  // namespace drape::sim

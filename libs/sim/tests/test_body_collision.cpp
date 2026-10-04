@@ -52,8 +52,21 @@ TEST(BodyCollision, ParticlesRestOnSphere) {
   }
 }
 
-// Without self-collision (Phase D) the hanging folds pass through each other and keep drifting, so this
-// checks the drape after 5 s instead of waiting for stillness.
+// A load that would carry a free particle 4 cm (twice the SDF band) in one substep must still leave the
+// patch on the surface: contact has to be part of the implicit solve, not only a projection afterwards.
+TEST(BodyCollision, PressedPatchStaysOnSurface) {
+  SimScene scene;
+  scene.body = &sphereField();
+  scene.garments.push_back(centredSheet(0.004, 0.004, 0.15 + kContact));
+  for (std::uint32_t i = 0; i < scene.garments[0].mesh.rest.size(); ++i) scene.forces.push_back({i, {0, -1e-4, 0}});
+  CpuSolver s;
+  s.build(scene);
+  for (int f = 0; f < 30; ++f) s.step({1.0 / 60.0, 1, 2});
+  EXPECT_LE(s.stats().maxBodyPenetration, 0.002);
+  for (const auto& p : positions(s)) EXPECT_NEAR(sphereField().sample(p.cast<double>()), kContact, 0.0005);
+}
+
+// The drape's shape after 5 s; DrapedSheetComesToRest checks that it then comes to rest.
 TEST(BodyCollision, SheetDrapesOverSphere) {
   SimScene scene;
   scene.body = &sphereField();
@@ -67,6 +80,22 @@ TEST(BodyCollision, SheetDrapesOverSphere) {
   EXPECT_LE(st.maxBodyPenetration, 0.002);
   const auto centre = nearestTo(scene.garments[0].mesh, {0.3, 0.3});
   EXPECT_NEAR(positions(s)[centre].y(), 0.15 + kContact, 0.002);
+}
+
+// A draped sheet must come to rest, not keep simmering: 0.5 mm/s RMS held for 1 s within 10 s simulated is a
+// 4x margin under the spec's settle threshold (2 mm/s, Section 5.7).
+TEST(BodyCollision, DrapedSheetComesToRest) {
+  SimScene scene;
+  scene.body = &sphereField();
+  scene.garments.push_back(centredSheet(0.6, 0.01, 0.15 + 0.05));
+  CpuSolver s;
+  s.build(scene);
+  int still = 0, frame = 0;
+  for (; frame < 600 && still < 60; ++frame) {
+    s.step({1.0 / 60.0, 1, 2});
+    still = s.stats().rmsSpeed < 0.0005 ? still + 1 : 0;
+  }
+  EXPECT_EQ(still, 60) << "rms " << s.stats().rmsSpeed << " after " << frame << " frames";
 }
 
 TEST(BodyCollision, StartsInsideIsResolved) {

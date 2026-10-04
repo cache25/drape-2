@@ -12,6 +12,11 @@
 
 namespace drape::sim {
 
+namespace {
+constexpr double kContactReach = 0.01;   // m: particles closer than r + this get a contact plane each substep
+constexpr double kContactSnap = 0.0005;  // m: a particle this close above its plane is held on it
+}  // namespace
+
 int substepsFor(SimQuality q) {
   switch (q) {
     case SimQuality::Draft: return 1;
@@ -23,7 +28,7 @@ int substepsFor(SimQuality q) {
 
 int iterationsFor(SimQuality q) {
   switch (q) {
-    case SimQuality::Draft: return 1;
+    case SimQuality::Draft: return 2;
     case SimQuality::Standard: return 2;
     case SimQuality::Fine: return 2;
   }
@@ -57,6 +62,16 @@ struct CpuSolver::Impl {
   std::vector<std::uint8_t> pinned;
   std::vector<std::pair<std::uint32_t, Vec3f>> pins;
 
+  // Body contact inside the solve (spec 5.5), refreshed every substep. A particle near the body gets the
+  // tangent plane at its substep-start position. While active, the particle is held on that plane: Newton
+  // steps are filtered to the plane (Baraff & Witkin 1998) and the normal force is read from the residual.
+  // Friction is a smoothed Coulomb energy in the same solve, using the latest known normal force (previous
+  // Newton iteration, or previous substep for the first one).
+  std::vector<V3> contactNormal;
+  std::vector<double> contactOffset, contactForce, frictionLambda;  // offset r - phi(xStart); forces in newtons
+  double substepH = 1.0 / 60.0;
+  std::vector<std::uint8_t> contactNear, contactActive;
+
   // Energy terms.
   std::vector<StretchTerm> stretch;
   std::vector<HingeTerm> hinges;
@@ -71,13 +86,24 @@ struct CpuSolver::Impl {
   std::vector<std::array<std::uint32_t, 4>> seamSlots;
 
   // Solver work arrays (double).
-  std::vector<V3> xd, xStart, y, grad, step, r, z, p, ap, trial;
+  std::vector<V3> xd, xStart, y, grad, step, r, z, p, ap, trial, apFull, resid;
   std::vector<M3> blocks, precond;
 
   std::size_t garmentIndex(const GarmentId& id) const {
     for (std::size_t i = 0; i < garments.size(); ++i)
       if (garments[i].id == id) return i;
     throw std::out_of_range("unknown garment '" + id + "'");
+  }
+
+  double contactRadius(std::size_t i) const { return settings.collisionOffset + 0.5 * fabrics[pFabric[i]].thickness; }
+  // > 0 when `pos` lies below particle i's contact plane.
+  double contactGap(std::size_t i, const V3& pos) const {
+    return contactOffset[i] - contactNormal[i].dot(pos - xStart[i]);
+  }
+  // Removes the normal component at particles held on their contact plane.
+  void filter(std::vector<V3>& vec) const {
+    for (std::size_t i = 0; i < vec.size(); ++i)
+      if (contactActive[i]) vec[i] -= contactNormal[i] * contactNormal[i].dot(vec[i]);
   }
 
   void updateMass(std::uint32_t i) { mass[i] = std::max(vertexArea[i] * fabrics[pFabric[i]].weight, 1e-12); }
@@ -137,7 +163,14 @@ struct CpuSolver::Impl {
     for (std::size_t k = 0; k < seams.size(); ++k) slotsFor(std::array<std::uint32_t, 2>{seams[k].a, seams[k].b}, seamSlots[k]);
     blocks.assign(colIndex.size(), M3::Zero());
     precond.assign(n, M3::Identity());
-    for (auto* vec : {&xd, &xStart, &y, &grad, &step, &r, &z, &p, &ap, &trial}) vec->assign(n, V3::Zero());
+    for (auto* vec : {&xd, &xStart, &y, &grad, &step, &r, &z, &p, &ap, &trial, &apFull, &resid})
+      vec->assign(n, V3::Zero());
+    contactNormal.assign(n, V3::Zero());
+    contactOffset.assign(n, 0.0);
+    contactForce.assign(n, 0.0);
+    frictionLambda.assign(n, 0.0);
+    contactNear.assign(n, 0);
+    contactActive.assign(n, 0);
   }
 
   // Total energy at `pos`; with withDerivatives also fills grad and the block Hessian.
@@ -192,6 +225,18 @@ struct CpuSolver::Impl {
       addTerm<2>(std::array<std::uint32_t, 2>{s.a, s.b}, seamSlots[k], pos, withDerivatives, energy,
                  [&](const auto& xs, auto& te) { evalSeamTerm(xs, target, settings.seamStiffness, te); });
     }
+    for (std::size_t i = 0; i < n; ++i) {
+      if (frictionLambda[i] <= 0) continue;
+      TermEval<1> te;
+      te.clear();
+      evalFrictionTerm(pos[i], xStart[i], contactNormal[i], fabrics[pFabric[i]].friction * frictionLambda[i],
+                       settings.frictionSlipSpeed * substepH, te);
+      energy += te.energy;
+      if (withDerivatives) {
+        grad[i] += te.grad[0];
+        blocks[diagSlot[i]] += te.hess[0][0];
+      }
+    }
     if (withDerivatives) {
       for (std::size_t i = 0; i < n; ++i)
         if (pinned[i]) grad[i].setZero();
@@ -220,7 +265,8 @@ struct CpuSolver::Impl {
     return s;
   }
 
-  // Solves A step = -grad with block-Jacobi preconditioned conjugate gradients.
+  // Solves A step = -grad with block-Jacobi preconditioned conjugate gradients, restricted to the contact
+  // planes of active particles; then reads each active particle's normal force from the unfiltered residual.
   void solveLinear() {
     const std::size_t n = grad.size();
     for (std::size_t i = 0; i < n; ++i) {
@@ -233,29 +279,53 @@ struct CpuSolver::Impl {
     }
     for (std::size_t i = 0; i < n; ++i) {
       step[i].setZero();
-      r[i] = -grad[i];
-      z[i] = precond[i] * r[i];
-      p[i] = z[i];
+      resid[i] = -grad[i];
+      r[i] = resid[i];
     }
+    filter(r);
+    for (std::size_t i = 0; i < n; ++i) z[i] = precond[i] * r[i];
+    filter(z);
+    p = z;
     double rz = dot(r, z);
     const double r0 = std::sqrt(dot(r, r));
-    if (r0 == 0) return;
-    for (int it = 0; it < settings.maxCgIterations; ++it) {
-      multiply(p, ap);
+    for (int it = 0; r0 > 0 && it < settings.maxCgIterations; ++it) {
+      multiply(p, apFull);
+      ap = apFull;
+      filter(ap);
       const double pAp = dot(p, ap);
       if (!(pAp > 0)) break;
       const double alpha = rz / pAp;
       for (std::size_t i = 0; i < n; ++i) {
         step[i] += alpha * p[i];
         r[i] -= alpha * ap[i];
+        resid[i] -= alpha * apFull[i];
       }
       if (std::sqrt(dot(r, r)) <= settings.cgTolerance * r0) break;
       for (std::size_t i = 0; i < n; ++i) z[i] = precond[i] * r[i];
+      filter(z);
       const double rzNew = dot(r, z);
       const double beta = rzNew / rz;
       rz = rzNew;
       for (std::size_t i = 0; i < n; ++i) p[i] = z[i] + beta * p[i];
     }
+    // resid is the net force left in the linear model; the body supplies whatever pushes inward.
+    for (std::size_t i = 0; i < n; ++i)
+      contactForce[i] = contactActive[i] ? std::max(0.0, -resid[i].dot(contactNormal[i])) : 0.0;
+  }
+
+  // Holds near particles on their contact planes for this Newton iteration (projecting any that are below
+  // it), evaluates, then frees the ones the other forces pull off the body.
+  double evaluateWithContact(double invH2) {
+    for (std::size_t i = 0; i < xd.size(); ++i) {
+      if (!contactNear[i]) continue;
+      const double c = contactGap(i, xd[i]);
+      if (c > -kContactSnap) contactActive[i] = 1;
+      if (contactActive[i] && c > 0) xd[i] += c * contactNormal[i];
+    }
+    const double e = evaluate(xd, invH2, true);
+    for (std::size_t i = 0; i < xd.size(); ++i)
+      if (contactActive[i] && grad[i].dot(contactNormal[i]) < 0) contactActive[i] = 0;
+    return e;
   }
 
   void substep(double h, int newtonIterations) {
@@ -274,8 +344,26 @@ struct CpuSolver::Impl {
       y[i] = xStart[i] + h * vel + h * h * (g + fExt[i] / mass[i]);
       xd[i] = xStart[i] + h * vel;
     }
+    substepH = h;
+    for (std::size_t i = 0; i < n; ++i) {
+      contactNear[i] = 0;
+      contactActive[i] = 0;
+      frictionLambda[i] = 0;
+      const double lastForce = contactForce[i];
+      contactForce[i] = 0;
+      if (!body || pinned[i]) continue;
+      const double radius = contactRadius(i);
+      const double phi = body->sample(xStart[i]);
+      if (phi >= radius + kContactReach) continue;
+      const V3 normal = body->gradient(xStart[i]);
+      if (normal.isZero()) continue;
+      contactNear[i] = 1;
+      contactNormal[i] = normal;
+      contactOffset[i] = radius - phi;
+      frictionLambda[i] = lastForce;
+    }
     for (int it = 0; it < newtonIterations; ++it) {
-      const double e0 = evaluate(xd, invH2, true);
+      const double e0 = evaluateWithContact(invH2);
       solveLinear();
       const double slope = dot(grad, step);
       if (!(slope < 0)) break;
@@ -290,15 +378,22 @@ struct CpuSolver::Impl {
         xd[i] += alpha * step[i];
         maxMove = std::max(maxMove, (alpha * step[i]).cwiseAbs().maxCoeff());
       }
+      // The next Newton iteration's friction uses this solve's normal forces, so a particle landing this substep
+      // feels friction from its impact force rather than one substep late.
+      for (std::size_t i = 0; i < n; ++i) frictionLambda[i] = contactActive[i] ? contactForce[i] : 0.0;
       if (maxMove < 1e-9) break;
     }
     for (std::size_t i = 0; i < n; ++i) x[i] = xd[i].cast<float>();
     if (body) {
+      // Safety net only. The solve keeps contacts on their planes, and projecting every particle afterwards would
+      // kick resting cloth by the SDF's interpolation error / h each substep. A particle that still ends deeper
+      // than the snap tolerance (it reached the body during the last Newton step) is pushed out here.
       for (std::size_t i = 0; i < n; ++i) {
         if (pinned[i]) continue;
-        const auto& f = fabrics[pFabric[i]];
-        const float radius = static_cast<float>(settings.collisionOffset + 0.5 * f.thickness);
-        collideBody(*body, radius, static_cast<float>(f.friction), xStart[i].cast<float>(), x[i]);
+        const double radius = contactRadius(i);
+        if (body->sample(x[i].cast<double>()) >= radius - kContactSnap) continue;
+        collideBody(*body, static_cast<float>(radius), static_cast<float>(fabrics[pFabric[i]].friction),
+                    xStart[i].cast<float>(), x[i]);
       }
     }
     for (const auto& [i, pos] : pins) x[i] = pos;
@@ -516,6 +611,7 @@ void CpuSolver::restore(const Snapshot& snap) {
   }
   s.x = snap.positions;
   s.v = snap.velocities;
+  std::fill(s.contactForce.begin(), s.contactForce.end(), 0.0);
   for (std::size_t i = 0; i < s.garments.size(); ++i) {
     s.garments[i].phase = snap.phases[i];
     s.garments[i].assemblyTime = snap.assemblyTime[i];
