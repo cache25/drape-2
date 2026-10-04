@@ -11,4 +11,9 @@ namespace drape::sim {
 void collideBody(const CollisionField& body, float radius, float friction, const Eigen::Vector3f& xPrev,
                  Eigen::Vector3f& x);
 
+// Last point on the segment from -> to that is at least `radius` from the body (bisection on the field), or `from`
+// itself when it is already closer. Used where the field is flat (beyond its band) and gives no push-out direction.
+Eigen::Vector3f landOnBody(const CollisionField& body, float radius, const Eigen::Vector3f& from,
+                           const Eigen::Vector3f& to);
+
 }  // namespace drape::sim

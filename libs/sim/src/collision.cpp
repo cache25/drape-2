@@ -21,4 +21,16 @@ void collideBody(const CollisionField& body, float radius, float friction, const
   }
 }
 
+Eigen::Vector3f landOnBody(const CollisionField& body, float radius, const Eigen::Vector3f& from,
+                           const Eigen::Vector3f& to) {
+  auto clear = [&](float t) { return body.sample((from + t * (to - from)).cast<double>()) >= radius; };
+  if (!clear(0)) return from;
+  float lo = 0, hi = 1;
+  for (int i = 0; i < 40; ++i) {
+    const float mid = 0.5f * (lo + hi);
+    (clear(mid) ? lo : hi) = mid;
+  }
+  return from + lo * (to - from);
+}
+
 }  // namespace drape::sim

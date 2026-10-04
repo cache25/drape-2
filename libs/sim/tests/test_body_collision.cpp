@@ -82,6 +82,20 @@ TEST(BodyCollision, SheetDrapesOverSphere) {
   EXPECT_NEAR(positions(s)[centre].y(), 0.15 + kContact, 0.002);
 }
 
+// A particle that is not yet near the body and jumps past the SDF band in one substep (where the field is flat
+// and gives no push-out direction) must land on the surface instead of being trapped inside.
+TEST(BodyCollision, FastPatchCannotTunnelPastTheBand) {
+  SimScene scene;
+  scene.body = &sphereField();
+  scene.garments.push_back(centredSheet(0.004, 0.004, 0.15 + 0.015));
+  for (std::uint32_t i = 0; i < scene.garments[0].mesh.rest.size(); ++i) scene.forces.push_back({i, {0, -3e-4, 0}});
+  CpuSolver s;
+  s.build(scene);
+  for (int f = 0; f < 10; ++f) s.step({1.0 / 60.0, 1, 2});
+  EXPECT_LE(s.stats().maxBodyPenetration, 0.002);
+  for (const auto& p : positions(s)) EXPECT_NEAR(sphereField().sample(p.cast<double>()), kContact, 0.0005);
+}
+
 // A draped sheet must come to rest, not keep simmering: 0.5 mm/s RMS held for 1 s within 10 s simulated is a
 // 4x margin under the spec's settle threshold (2 mm/s, Section 5.7).
 TEST(BodyCollision, DrapedSheetComesToRest) {
@@ -96,6 +110,24 @@ TEST(BodyCollision, DrapedSheetComesToRest) {
     still = s.stats().rmsSpeed < 0.0005 ? still + 1 : 0;
   }
   EXPECT_EQ(still, 60) << "rms " << s.stats().rmsSpeed << " after " << frame << " frames";
+}
+
+// Contact carries state between substeps (the normal force that friction uses); a snapshot must capture it.
+TEST(BodyCollision, SnapshotRestoreIsDeterministicInContact) {
+  SimScene scene;
+  scene.body = &sphereField();
+  scene.garments.push_back(centredSheet(0.2, 0.02, 0.15 + 0.02));
+  CpuSolver s;
+  s.build(scene);
+  for (int f = 0; f < 60; ++f) s.step({1.0 / 60.0, 1, 2});
+  const Snapshot snap = s.snapshot();
+  for (int f = 0; f < 20; ++f) s.step({1.0 / 60.0, 1, 2});
+  const auto first = positions(s);
+  s.restore(snap);
+  for (int f = 0; f < 20; ++f) s.step({1.0 / 60.0, 1, 2});
+  const auto second = positions(s);
+  ASSERT_EQ(first.size(), second.size());
+  for (std::size_t i = 0; i < first.size(); ++i) EXPECT_EQ(first[i], second[i]) << "particle " << i;
 }
 
 TEST(BodyCollision, StartsInsideIsResolved) {

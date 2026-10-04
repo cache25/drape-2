@@ -78,6 +78,7 @@ struct Snapshot {
   std::vector<SimPhase> phases;
   std::vector<double> assemblyTime;
   std::vector<float> seamStartGap;
+  std::vector<double> contactForce;  // per particle: last body normal force, which the next substep's friction uses
 };
 
 // Cloth solver interface (spec 5.2). Particles are the garments' vertices in scene order.

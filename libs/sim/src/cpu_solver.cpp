@@ -392,6 +392,12 @@ struct CpuSolver::Impl {
         if (pinned[i]) continue;
         const double radius = contactRadius(i);
         if (body->sample(x[i].cast<double>()) >= radius - kContactSnap) continue;
+        if (body->gradient(x[i].cast<double>()).isZero()) {
+          // Past the SDF band the field is flat and gives no direction: stop the particle where its path met the
+          // body this substep. It is near the body next substep, so its contact plane takes over.
+          x[i] = landOnBody(*body, static_cast<float>(radius), xStart[i].cast<float>(), x[i]);
+          continue;
+        }
         collideBody(*body, static_cast<float>(radius), static_cast<float>(fabrics[pFabric[i]].friction),
                     xStart[i].cast<float>(), x[i]);
       }
@@ -601,6 +607,7 @@ Snapshot CpuSolver::snapshot() const {
     snap.assemblyTime.push_back(g.assemblyTime);
   }
   for (const auto& sp : impl_->seams) snap.seamStartGap.push_back(sp.startGap);
+  snap.contactForce = impl_->contactForce;
   return snap;
 }
 
@@ -611,7 +618,11 @@ void CpuSolver::restore(const Snapshot& snap) {
   }
   s.x = snap.positions;
   s.v = snap.velocities;
-  std::fill(s.contactForce.begin(), s.contactForce.end(), 0.0);
+  if (snap.contactForce.size() == s.contactForce.size()) {
+    s.contactForce = snap.contactForce;
+  } else {
+    std::fill(s.contactForce.begin(), s.contactForce.end(), 0.0);
+  }
   for (std::size_t i = 0; i < s.garments.size(); ++i) {
     s.garments[i].phase = snap.phases[i];
     s.garments[i].assemblyTime = snap.assemblyTime[i];

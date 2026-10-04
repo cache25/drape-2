@@ -103,3 +103,38 @@ TEST(TestTee, InfeasibleSpecThrows) {
   expectThrowMentioning({{"M", {{"sleeve_length", -0.1}}}}, "sleeve_length");
   expectThrowMentioning({{"M", {{"armhole_depth", 0.05}}}}, "armhole_depth");
 }
+
+// Overrides that contradict each other must be refused naming the POMs involved (spec 7.2), not produce a pattern
+// that only fails later as an unexplained mesh error.
+TEST(TestTee, ConflictingPomsNameThePoms) {
+  auto expectThrowMentioning = [](const SpecOverrides& o, const std::vector<std::string>& words) {
+    try {
+      teeFor("M", o);
+      ADD_FAILURE() << "expected GeneratorError for " << words.front();
+    } catch (const GeneratorError& e) {
+      for (const auto& w : words) EXPECT_NE(std::string(e.what()).find(w), std::string::npos) << e.what();
+    }
+  };
+  expectThrowMentioning({{"M", {{"neck_width", 0.47}}}}, {"neck_width", "shoulder_width"});
+  expectThrowMentioning({{"M", {{"shoulder_width", 0.20}}}}, {"shoulder_width", "sleeve_length"});  // armhole too long
+  expectThrowMentioning({{"M", {{"front_neck_drop", 0.80}}}}, {"front_neck_drop", "body_length"});
+  expectThrowMentioning({{"M", {{"back_neck_drop", 0.75}}}}, {"back_neck_drop", "body_length"});
+  expectThrowMentioning({{"M", {{"armhole_depth", 0.75}}}}, {"armhole_depth", "body_length"});
+}
+
+// Whatever the overrides, generate() either refuses them with GeneratorError or returns a valid pattern.
+TEST(TestTee, NeverReturnsAnInvalidPattern) {
+  TestTeeGenerator g;
+  for (const auto& pom : g.specTable().poms) {
+    for (double scale : {0.1, 0.5, 2.0, 4.0, 10.0}) {
+      const SpecOverrides o{{"M", {{pom.key, pom.base * scale}}}};
+      try {
+        const Pattern p = teeFor("M", o);
+        const auto issues = validatePattern(p);
+        EXPECT_TRUE(issues.empty()) << pom.key << " x" << scale << ": " << issues.front().rule << " "
+                                    << issues.front().message;
+      } catch (const GeneratorError&) {
+      }
+    }
+  }
+}

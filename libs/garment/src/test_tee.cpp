@@ -2,8 +2,10 @@
 
 #include <cmath>
 #include <functional>
+#include <string>
 
 #include "drape/garment/shapes.hpp"
+#include "drape/garment/validate.hpp"
 
 namespace drape::garment {
 
@@ -22,9 +24,15 @@ TeeSpec readSpec(const std::map<std::string, double>& spec, const SpecTable& tab
   TeeSpec s{spec.at("chest_width"),  spec.at("body_length"),     spec.at("shoulder_width"), spec.at("sleeve_length"),
             spec.at("sleeve_opening"), spec.at("bicep_width"),   spec.at("neck_width"),     spec.at("front_neck_drop"),
             spec.at("back_neck_drop"), spec.at("armhole_depth"), spec.at("shoulder_drop"),  spec.at("neck_rib_height")};
-  if (!(s.AD > s.SD + 0.02)) {
-    throw GeneratorError("test_tee: 'armhole_depth' must exceed 'shoulder_drop' by at least 0.02 m");
-  }
+  // Each requirement keeps at least 2 cm between the two points the POMs place.
+  auto require = [](bool ok, const char* message) {
+    if (!ok) throw GeneratorError(std::string("test_tee: ") + message);
+  };
+  require(s.AD > s.SD + 0.02, "'armhole_depth' must exceed 'shoulder_drop' by at least 0.02 m");
+  require(s.NW < s.S - 0.02, "'neck_width' must be at least 0.02 m less than 'shoulder_width'");
+  require(s.AD < s.L - 0.02, "'armhole_depth' must be at least 0.02 m less than 'body_length'");
+  require(s.FND < s.L - 0.02, "'front_neck_drop' must be at least 0.02 m less than 'body_length'");
+  require(s.BND < s.L - 0.02, "'back_neck_drop' must be at least 0.02 m less than 'body_length'");
   return s;
 }
 
@@ -66,9 +74,13 @@ double solveCapHeight(const TeeSpec& s, double armholeLength) {
   double lo = 0.02;
   double hi = s.SL - 0.02;
   if (hi <= lo || f(hi) < 0) {
-    throw GeneratorError("test_tee: sleeve_length is too short for the armhole; no sleeve cap fits");
+    throw GeneratorError("test_tee: no sleeve cap fits: 'sleeve_length' is too short for the armhole set by "
+                         "'chest_width', 'shoulder_width', 'armhole_depth' and 'shoulder_drop'");
   }
-  if (f(lo) > 0) throw GeneratorError("test_tee: bicep_width is too large for the armhole; no sleeve cap fits");
+  if (f(lo) > 0) {
+    throw GeneratorError("test_tee: no sleeve cap fits: 'bicep_width' is too large for the armhole set by "
+                         "'chest_width', 'shoulder_width', 'armhole_depth' and 'shoulder_drop'");
+  }
   for (int i = 0; i < 100 && hi - lo > 1e-10; ++i) {
     const double mid = 0.5 * (lo + hi);
     (f(mid) > 0 ? hi : lo) = mid;
@@ -159,6 +171,11 @@ Pattern TestTeeGenerator::generate(const std::map<std::string, double>& spec) co
   seam("neck_front", EdgeRef{"neck_rib", 0.0, lf, false}, edge(front, "neck_r", "neck_l", true));
   seam("neck_back", EdgeRef{"neck_rib", lf, lr, false}, edge(back, "neck_r", "neck_l", true));
   seam("rib_close", edge(rib, "right", "right", false), edge(rib, "left", "left", true));
+  // Backstop for combinations the checks above do not foresee: never hand out a pattern that fails validation.
+  if (const auto issues = validatePattern(p); !issues.empty()) {
+    throw GeneratorError("test_tee: these measurements give an invalid pattern (" + issues.front().rule + ": " +
+                         issues.front().message + ")");
+  }
   return p;
 }
 

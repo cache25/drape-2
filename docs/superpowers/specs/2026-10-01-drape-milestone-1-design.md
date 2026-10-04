@@ -1,6 +1,6 @@
 # Drape — Milestone 1 Design Spec
 
-**Status:** Approved 2026-10-01; amended during Phase A planning (bending constants, seam assembly, dependency versions) and Phase A execution (solver method XPBD → implicit Newton–CG, Section 5.1; bending constants re-measured, Section 5.4)
+**Status:** Approved 2026-10-01; amended during Phase A planning (bending constants, seam assembly, dependency versions) and Phase A execution (solver method XPBD → implicit Newton–CG and quality defaults, Section 5.1; bending constants re-measured, Section 5.4; body contact and friction inside the solve, plus the snapshot contents, Sections 5.2 and 5.5)
 **Date:** 2026-10-01
 **Owner:** Ian Schory
 **Scope:** Sub-project #1 of the Drape roadmap: pre-made garments draped on a sized avatar, with real fabric physics and high-quality real-time rendering, for Apple Silicon Macs.
@@ -217,7 +217,7 @@ public:
 };
 ```
 
-`CpuSolver` and `MetalSolver` implement the same interface and the same algorithm. The linear algebra (block-sparse matrix–vector products, dot products, vector updates) parallelizes directly on the GPU. Body collision and pins are applied as position projections after each substep's Newton iterations.
+`CpuSolver` and `MetalSolver` implement the same interface and the same algorithm. The linear algebra (block-sparse matrix–vector products, dot products, vector updates) parallelizes directly on the GPU. Body contact is part of the solve (Section 5.5): contact planes filter the conjugate-gradient iterations, and friction is an energy term. Pins are applied as fixed positions.
 
 ### 5.3 Sim mesh from a pattern (`drape_garment`)
 
@@ -297,7 +297,7 @@ During Assembling and Settling, the sim runs as many frames as the time budget a
 ### 5.8 Stability guard
 
 - A GPU reduction each frame computes a NaN/Inf flag, total kinetic energy, and the share of particles held at the displacement clamp (Section 5.5).
-- A snapshot (positions + velocities) is kept every 30 frames.
+- A snapshot (positions, velocities, and the solver state that carries between frames: phases, assembly progress, seam start gaps, body contact forces) is kept every 30 frames. Restoring it reproduces the run bit for bit.
 - **Failure** means any of:
   - a NaN/Inf;
   - more than 5% of particles held at the displacement clamp for 30 consecutive frames;
