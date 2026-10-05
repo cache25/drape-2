@@ -67,13 +67,13 @@ Ian's Mac now has Homebrew's Eigen 5.0.1 (unversioned `eigen`) and 3.4.1 (`eigen
 
 **Interfaces:** none.
 
-- [ ] **Step 1: Pin Eigen.** Replace the `find_package(Eigen3 …)` block with:
+- [ ] **Step 1: Pin Eigen.** Replace the `find_package(Eigen3 …)` block in `cmake/DrapeDependencies.cmake` with the lines below. This is a source edit, not a terminal command; CMake reads it at configure time. (As built in Task 1: the range is `<4` because Eigen 3.4.0's version file rejects `3.4...<5` on Linux.)
 
 ```cmake
 if(APPLE)
-  list(APPEND CMAKE_PREFIX_PATH /opt/homebrew/opt/eigen@3)  # keg-only Homebrew Eigen 3.4
+  list(APPEND CMAKE_PREFIX_PATH /opt/homebrew/opt/eigen@3 /usr/local/opt/eigen@3)  # keg-only Homebrew Eigen 3.4
 endif()
-find_package(Eigen3 3.4...<5 REQUIRED NO_MODULE)
+find_package(Eigen3 3.4...<4 REQUIRED NO_MODULE)
 ```
 
 - [ ] **Step 2: Give the sheet 20 s, not 10 s.** In `DrapedSheetComesToRest`, change the frame limit from 600 to 1200. Change the comment to "0.5 mm/s RMS held for 1 s within 20 s simulated". The 0.5 mm/s threshold stays.
