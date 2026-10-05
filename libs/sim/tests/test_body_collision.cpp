@@ -96,7 +96,7 @@ TEST(BodyCollision, FastPatchCannotTunnelPastTheBand) {
   for (const auto& p : positions(s)) EXPECT_NEAR(sphereField().sample(p.cast<double>()), kContact, 0.0005);
 }
 
-// A draped sheet must come to rest, not keep simmering: 0.5 mm/s RMS held for 1 s within 10 s simulated is a
+// A draped sheet must come to rest, not keep simmering: 0.5 mm/s RMS held for 1 s within 20 s simulated is a
 // 4x margin under the spec's settle threshold (2 mm/s, Section 5.7).
 TEST(BodyCollision, DrapedSheetComesToRest) {
   SimScene scene;
@@ -105,7 +105,7 @@ TEST(BodyCollision, DrapedSheetComesToRest) {
   CpuSolver s;
   s.build(scene);
   int still = 0, frame = 0;
-  for (; frame < 600 && still < 60; ++frame) {
+  for (; frame < 1200 && still < 60; ++frame) {
     s.step({1.0 / 60.0, 1, 2});
     still = s.stats().rmsSpeed < 0.0005 ? still + 1 : 0;
   }

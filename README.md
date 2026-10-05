@@ -10,6 +10,8 @@ sudo apt-get install -y cmake ninja-build g++ libeigen3-dev python3-matplotlib
 cmake --preset dev && cmake --build --preset dev && ctest --preset dev
 ```
 
+Mac (Homebrew): `brew install cmake ninja eigen@3 git`
+
 Quick test loop: `ctest --preset dev -LE "slow|perf"`. Timing tests: `ctest --preset release -L perf`.
 
 ## Developer tools
