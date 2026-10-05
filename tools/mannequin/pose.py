@@ -24,7 +24,9 @@ Transform = Callable[[np.ndarray], np.ndarray]     # (K, 3) points -> (K, 3) poi
 @dataclass
 class Posed:
     vertices: np.ndarray                  # (N, 3) skinned vertices, same indexing as the input
-    joints: dict[str, np.ndarray]         # posed (3,) positions of the limb joints, keyed by joint name
+    joints: dict[str, np.ndarray]         # posed (3,) positions of the limb joints, keyed by joint name:
+                                          # shoulder (upperarm01), elbow (lowerarm01), wrist, hip
+                                          # (upperleg01) and ankle (foot) heads, per side
 
 
 def frontal_angle(d: np.ndarray) -> float:
@@ -66,6 +68,9 @@ def pose(vertices: np.ndarray, rig: Rig, arm_deg: float = 45.0, leg_deg: float =
     every bone under the foot additionally gets the opposite rotation about the posed ankle, which
     keeps the sole level. Skinning is v' = v + sum_b w_b (T_b v - v), so bones that are not posed
     contribute nothing and vertices they alone hold are returned bit for bit.
+
+    `Posed.joints` holds ten joints: per side, the shoulder and hip pivots (unchanged), and the
+    elbow (`lowerarm01`), wrist and ankle heads moved by their side's arm or foot transform.
     """
     vertices = np.asarray(vertices, dtype=np.float64)
     posed = vertices.copy()
@@ -73,7 +78,7 @@ def pose(vertices: np.ndarray, rig: Rig, arm_deg: float = 45.0, leg_deg: float =
     transforms: dict[str, Transform] = {}
 
     for side, mirror in (("L", 1.0), ("R", -1.0)):
-        shoulder, wrist = f"upperarm01.{side}", f"wrist.{side}"
+        shoulder, elbow, wrist = f"upperarm01.{side}", f"lowerarm01.{side}", f"wrist.{side}"
         hip, foot = f"upperleg01.{side}", f"foot.{side}"
         shoulder_pos = joint_pos(vertices, rig, _head(shoulder))
         hip_pos = joint_pos(vertices, rig, _head(hip))
@@ -94,6 +99,7 @@ def pose(vertices: np.ndarray, rig: Rig, arm_deg: float = 45.0, leg_deg: float =
 
         joints[_head(shoulder)] = shoulder_pos      # pivots: unchanged
         joints[_head(hip)] = hip_pos
+        joints[_head(elbow)] = arm_swing(joint_pos(vertices, rig, _head(elbow))[None])[0]
         joints[_head(wrist)] = arm_swing(joint_pos(vertices, rig, _head(wrist))[None])[0]
         joints[_head(foot)] = foot_swing(ankle_pos[None])[0]
 

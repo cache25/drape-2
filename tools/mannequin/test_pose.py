@@ -18,6 +18,7 @@ HIP = np.array([0.10, 0.90, 0.00])
 ARM_LENGTH = 0.60
 LEG_LENGTH = 0.85
 ARM_FORWARD_Z = 0.10      # MakeHuman's arms swing forward; rotation about z must keep it
+ELBOW_BEND = np.array([0.03, 0.02, -0.04])    # the elbow sits off the straight shoulder-wrist line
 SIDES = (("L", 1.0), ("R", -1.0))
 
 
@@ -37,9 +38,9 @@ def mirrored(rig: makehuman.Rig) -> makehuman.Rig:
 
 class Body:
     """Vertices plus a rig. `strips[name]` is the vertex index range of each strip; `rig.joints`
-    puts one helper vertex at each joint. Bones: root > upperarm01 > wrist and
+    puts one helper vertex at each joint. Bones: root > upperarm01 > lowerarm01 > wrist and
     root > upperleg01 > lowerleg01 > foot, per side (foot is a descendant of the upper leg, as
-    in MakeHuman)."""
+    in MakeHuman). The elbow joint (lowerarm01's head) is bent off the shoulder-wrist line."""
 
     def __init__(self, arm_deg: float = ARM_REST_DEG, leg_deg: float = LEG_REST_DEG):
         points: list[np.ndarray] = []
@@ -79,14 +80,17 @@ class Body:
             add_strip("sole." + side, "foot." + side, ankle + t * np.array([sx * 0.1, 0.0, 0.2]))
             add_joint(f"upperarm01.{side}____head", shoulder)
             add_joint(f"wrist.{side}____head", wrist)
+            add_joint(f"lowerarm01.{side}____head", shoulder + 0.5 * ARM_LENGTH * arm_dir + ELBOW_BEND * [sx, 1, 1])
             add_joint(f"upperleg01.{side}____head", hip)
             add_joint(f"foot.{side}____head", ankle)
             for bone, up in (("upperarm01", "root"), ("upperleg01", "root"),
                              ("lowerleg01", "upperleg01"), ("foot", "lowerleg01")):
                 parent[f"{bone}.{side}"] = up if up == "root" else f"{up}.{side}"
                 head_joint[f"{bone}.{side}"] = f"{bone}.{side}____head"
-        parent["wrist.L"], parent["wrist.R"] = "upperarm01.L", "upperarm01.R"
-        head_joint["wrist.L"], head_joint["wrist.R"] = "wrist.L____head", "wrist.R____head"
+        for side in "LR":
+            parent[f"lowerarm01.{side}"], parent[f"wrist.{side}"] = f"upperarm01.{side}", f"lowerarm01.{side}"
+            head_joint[f"lowerarm01.{side}"] = f"lowerarm01.{side}____head"
+            head_joint[f"wrist.{side}"] = f"wrist.{side}____head"
 
         # One vertex that no bone mentions, to show it stays where it is.
         self.orphan = len(points)
@@ -181,6 +185,19 @@ class Pose(unittest.TestCase):
                                        np.tile(ankle_shift, (len(sole), 1)), atol=1e-12)
             self.assertFalse(np.allclose(ankle_shift, 0.0, atol=1e-6))    # the legs did move
 
+    def test_elbows_turn_with_the_arm(self):
+        # The elbow gets the shoulder rotation: it keeps its distance from the shoulder and its z,
+        # and its frontal angle moves by exactly as much as the wrist's (45 - 40 degrees).
+        body = Body()
+        posed = pose.pose(body.vertices, body.rig)
+        for side, _ in SIDES:
+            shoulder = body.joint(f"upperarm01.{side}____head")
+            elbow, elbow_posed = body.joint(f"lowerarm01.{side}____head"), posed.joints[f"lowerarm01.{side}____head"]
+            self.assertAlmostEqual(np.linalg.norm(elbow_posed - shoulder), np.linalg.norm(elbow - shoulder), places=12)
+            self.assertAlmostEqual(elbow_posed[2], elbow[2], places=12)
+            turned = pose.frontal_angle(elbow_posed - shoulder) - pose.frontal_angle(elbow - shoulder)
+            self.assertAlmostEqual(turned, 45.0 - ARM_REST_DEG, delta=1e-9)
+
     def test_unweighted_vertices_stay(self):
         body = Body()
         posed = pose.pose(body.vertices, body.rig)
@@ -205,12 +222,12 @@ class Pose(unittest.TestCase):
         self.assertTrue(np.array_equal(body.vertices, before))
         self.assertIsNot(posed.vertices, body.vertices)
 
-    def test_posed_holds_exactly_the_eight_joints(self):
+    def test_posed_holds_exactly_the_ten_joints(self):
         body = Body()
         posed = pose.pose(body.vertices, body.rig)
         self.assertEqual(set(posed.joints),
-                         {f"{bone}.{side}____head" for bone in ("upperarm01", "wrist", "upperleg01", "foot")
-                          for side in "LR"})
+                         {f"{bone}.{side}____head"
+                          for bone in ("upperarm01", "lowerarm01", "wrist", "upperleg01", "foot") for side in "LR"})
 
     def test_deterministic(self):
         body = Body()

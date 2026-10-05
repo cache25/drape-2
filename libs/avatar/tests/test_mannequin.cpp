@@ -307,7 +307,7 @@ TEST(Mannequin, LoadsBothBodies) {
     for (const auto& [region, name] : kRegionNames) {
       EXPECT_EQ(m.regions.cylinders.count(region), 1u) << name;
     }
-    EXPECT_EQ(m.landmarks.points.size(), 17u);
+    EXPECT_EQ(m.landmarks.points.size(), 19u);
     EXPECT_EQ(m.girths.size(), 4u);
   });
 }
@@ -435,6 +435,27 @@ TEST(Mannequin, RegionsContainTheirParts) {
         worst = std::max(worst, (v - v.dot(axis) * axis).norm());
       }
       EXPECT_LE(worst, cylinder.radius + 1e-6) << "farthest vertex from the axis, m";
+    }
+  });
+}
+
+// Sleeves are placed on the arm cylinders, so they must hug the upper arm: run from the shoulder joint
+// toward the elbow, with a radius of an upper arm.
+TEST(Mannequin, ArmCylindersHugTheUpperArm) {
+  forEachBody([](const Body& b) {
+    const Mannequin& m = b.mannequin;
+    const std::pair<BodyRegion, const char*> arms[] = {{BodyRegion::ArmLeft, "left"}, {BodyRegion::ArmRight, "right"}};
+    for (const auto& [region, side] : arms) {
+      SCOPED_TRACE(side);
+      const std::string s = side;
+      const RegionCylinder& c = m.regions.cylinders.at(region);
+      EXPECT_GE(c.radius, 0.035);
+      EXPECT_LE(c.radius, 0.08);
+      const Vec3d shoulder = landmark(m, "shoulder_joint_" + s);
+      const Vec3d upperArm = (landmark(m, "elbow_" + s) - shoulder).normalized();
+      const double angle = std::acos(std::clamp(c.axis.normalized().dot(upperArm), -1.0, 1.0)) * 180.0 / kPi;
+      EXPECT_LE(angle, 2.0) << "degrees between the axis and shoulder joint -> elbow";
+      EXPECT_LE((c.origin - shoulder).norm(), 1e-6);
     }
   });
 }

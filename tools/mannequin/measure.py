@@ -26,6 +26,7 @@ _HPS_BAND = 0.02              # width of the strip beside the neck that the high
 _HPS_HALF_DEPTH = 0.03
 _SHOULDER_DISC = 0.015
 _TIE = 1e-9                   # extremes closer than this are ties
+_ARM_SPAN_START = 0.25        # arm radii skip the first quarter of shoulder -> elbow (the armpit fold)
 
 
 # --------------------------------------------------------------------------- sections
@@ -192,8 +193,8 @@ def measure_body(vertices: np.ndarray, tris: np.ndarray, dominant: list[str], ri
     """Landmarks, region cylinders and girths of the finished body.
 
     `vertices` (N, 3) are the body's vertices only, in Drape's frame, and `tris` (K, 3) index
-    them; `dominant` is `dominant_bones(rig, N)`. `joints` holds the posed `upperarm01`, `wrist`,
-    `upperleg01` and `foot` joints (`<bone>.<L|R>____head`, as `pose.Posed.joints` names them)
+    them; `dominant` is `dominant_bones(rig, N)`. `joints` holds the posed `upperarm01`, `lowerarm01`
+    (elbow), `wrist`, `upperleg01` and `foot` joints (`<bone>.<L|R>____head`, as `pose.Posed.joints` names them)
     and the unposed `breast.L____head` and `neck01____head`, all shifted into the same frame
     (`eye.L____head` may be present; nothing here needs it). `head_vertices` are the vertex
     indices the Head cylinder is meant to contain (the egg-surface vertices); they only fill
@@ -202,6 +203,18 @@ def measure_body(vertices: np.ndarray, tris: np.ndarray, dominant: list[str], ri
     Vertex classes, by dominant bone: *arm* (a descendant of `shoulder01.L` or `.R`), *head*
     (of `head`), *neck* (`neck01` to `neck03`), *leg* (of `upperleg01.L` or `.R`), *torso* (the
     rest); *non-arm* is every class but arm.
+
+    Arm cylinders follow the upper arm, the part a sleeve is placed on: origin at the shoulder
+    joint, axis toward the elbow joint, e0 = +Y less its part along the axis, and radius the
+    largest distance from the axis of the vertices whose dominant bone is `upperarm01` or
+    `upperarm02` of that side and whose axial coordinate lies in [|elbow - shoulder| / 4,
+    |elbow - shoulder|]; `region_vertices` holds exactly those vertices. The shoulder cap
+    (`shoulder01`) and the forearm do not count: MakeHuman's elbow is bent and its forearm swings
+    forward, so a shoulder-to-wrist cylinder would sit up to 9 cm off the upper arm and be twice as
+    wide. Nor does the first quarter of the span: `upperarm01` also holds the armpit and pectoral
+    fold there, up to 12 cm from the axis, which would make the cylinder far wider than the arm a
+    sleeve is placed on.
+    Leg cylinders run from the hip joint to the ankle over every leg-class vertex in that span.
 
     Everything returned is rounded to 6 decimals, the precision the assets are written with, and
     the radii are then measured from the rounded cylinders and rounded up, so a vertex that lies
@@ -278,6 +291,7 @@ def measure_body(vertices: np.ndarray, tris: np.ndarray, dominant: list[str], ri
             raise ValueError(f"no vertex within 1.5 cm of the {name} shoulder joint")
         landmarks[f"shoulder_{name}"] = vertices[_pick(vertices, near_joint, y, side=sign)]
         landmarks[f"shoulder_joint_{name}"] = joint
+        landmarks[f"elbow_{name}"] = joints[f"lowerarm01.{side}____head"]
         landmarks[f"wrist_{name}"] = joints[f"wrist.{side}____head"]
         landmarks[f"hip_joint_{name}"] = joints[f"upperleg01.{side}____head"]
         landmarks[f"ankle_{name}"] = joints[f"foot.{side}____head"]
@@ -297,8 +311,10 @@ def measure_body(vertices: np.ndarray, tris: np.ndarray, dominant: list[str], ri
                          "radius": _ceil6(float(reach))}
         region_vertices[name] = ids
 
-    def limb(name: str, root: np.ndarray, tip: np.ndarray, reference: np.ndarray, mask: np.ndarray) -> None:
-        """Cylinder along root -> tip; e0 is `reference` less its part along the axis."""
+    def limb(name: str, root: np.ndarray, tip: np.ndarray, reference: np.ndarray, mask: np.ndarray,
+             start: float = 0.0) -> None:
+        """Cylinder along root -> tip; e0 is `reference` less its part along the axis. The radius
+        counts the `mask` vertices whose axial coordinate is in [start * |tip - root|, |tip - root|]."""
         origin = _round(root)
         axis = _unit(tip - root)
         e0 = _unit(reference - (reference @ axis) * axis)
@@ -306,7 +322,8 @@ def measure_body(vertices: np.ndarray, tris: np.ndarray, dominant: list[str], ri
         along = _unit(axis)
         offset = vertices - origin
         axial = offset @ along
-        ids = np.flatnonzero(mask & (axial >= 0.0) & (axial <= np.linalg.norm(tip - root)))
+        length = float(np.linalg.norm(tip - root))
+        ids = np.flatnonzero(mask & (axial >= start * length) & (axial <= length))
         if len(ids) == 0:
             raise ValueError(f"no vertices for the {name} region")
         reach = np.linalg.norm(offset[ids] - axial[ids, None] * along, axis=1).max()
@@ -324,8 +341,10 @@ def measure_body(vertices: np.ndarray, tris: np.ndarray, dominant: list[str], ri
     vertical("Waist", np.array([0.0, waist_y, z_axis]), non_arm & (y >= crotch_y) & (y <= waist_y))
     up, forward = np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0])
     for side, name in (("L", "Left"), ("R", "Right")):
-        limb(f"Arm{name}", joints[f"upperarm01.{side}____head"], joints[f"wrist.{side}____head"], up,
-             cls[f"arm_{side}"])
+        upper_arm = np.fromiter((bone in (f"upperarm01.{side}", f"upperarm02.{side}") for bone in dominant),
+                                dtype=bool, count=len(dominant))
+        limb(f"Arm{name}", joints[f"upperarm01.{side}____head"], joints[f"lowerarm01.{side}____head"], up,
+             upper_arm, start=_ARM_SPAN_START)
         limb(f"Leg{name}", joints[f"upperleg01.{side}____head"], joints[f"foot.{side}____head"], forward,
              cls[f"leg_{side}"])
 

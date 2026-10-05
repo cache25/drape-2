@@ -177,16 +177,24 @@ class DominantBones(unittest.TestCase):
 SEGMENTS = 24
 SHOULDER = {"L": np.array([0.20, 1.40, 0.03]), "R": np.array([-0.20, 1.40, 0.03])}
 HIP = {"L": np.array([0.09, 0.90, 0.03]), "R": np.array([-0.09, 0.90, 0.03])}
-ARM_LENGTH, LEG_LENGTH = 0.60, 0.85
+LEG_LENGTH = 0.85
 BREAST_Y, NECK_BASE_Y = 1.30, 1.45
 ARM_RADIUS, LEG_RADIUS = 0.04, 0.075
+# The arm bends at the elbow, as MakeHuman's does: the upper arm hangs at 40 degrees, the forearm
+# swings out to 50 degrees and forward, and is thicker than the upper arm, so a cylinder that
+# counted it would show.
+UPPER_ARM_LENGTH, FOREARM_LENGTH = 0.30, 0.30
+UPPER_ARM_DEG, FOREARM_DEG, FOREARM_FORWARD = 40.0, 50.0, 0.4
+FOREARM_RADIUS = 0.05
+ARMPIT_FOLD_AXIAL, ARMPIT_FOLD_REACH = 0.02, 0.09   # an upperarm01 vertex in the armpit, near the shoulder
 SYNTHETIC_PARENT = {
     "root": None, "spine02": "root", "neck01": "spine02", "neck02": "neck01", "neck03": "neck02",
     "head": "neck03",
     **{f"{bone}.{s}": parent
        for s in "LR"
        for bone, parent in (("clavicle", "spine02"), ("shoulder01", f"clavicle.{s}"),
-                            ("upperarm01", f"shoulder01.{s}"), ("wrist", f"upperarm01.{s}"),
+                            ("upperarm01", f"shoulder01.{s}"), ("upperarm02", f"upperarm01.{s}"),
+                            ("lowerarm01", f"upperarm02.{s}"), ("wrist", f"lowerarm01.{s}"),
                             ("pelvis", "root"), ("upperleg01", f"pelvis.{s}"),
                             ("lowerleg01", f"upperleg01.{s}"))}}
 
@@ -225,8 +233,12 @@ def synthetic_body() -> SimpleNamespace:
       way the trapezius does on the real body, off-centre at z = 0.04;
     * head: a tube at z = 0.06, y 1.47 to 1.80: radius 0.10 up to y = 1.60 (a skirt of head-weighted
       vertices around the neck, as the levator bones give the real body), narrowing to 0.08;
-    * arms at 45 degrees from the shoulder joints, with a fat cap behind the joint (radius 0.08)
-      and a fat hand past the wrist (0.07) that the cylinder radius must not count;
+    * arms bent at the elbow: an upper arm (radius 0.04) at 40 degrees from the shoulder joint, its
+      first half on `upperarm01` and its second on `upperarm02`, with a fat cap behind the joint
+      (radius 0.08); a thicker forearm (0.05, `lowerarm01`) from the elbow at 50 degrees and swung
+      forward; a fat hand past the wrist (0.07); and a free `upperarm01` vertex in the armpit fold,
+      2 cm along the upper arm and 9 cm from its axis, as MakeHuman's armpit and pectoral fold
+      are; the arm cylinder must count none of the cap, the fold, the forearm or the hand;
     * legs at 5 degrees from the hip joints (y = 0.90), starting at y = 0.80 with a fat foot
       ring at the far end; at y = 0.80 the thigh tops make the widest section below the waist.
     """
@@ -251,14 +263,31 @@ def synthetic_body() -> SimpleNamespace:
     parts.append(("head", v, t, "head"))
 
     joints = {}
+    def limb_tube(start, direction, ts, radius):
+        u = np.cross(direction, [0.0, 0.0, 1.0])
+        u /= np.linalg.norm(u)
+        w = np.cross(direction, u)
+        radius = np.broadcast_to(np.asarray(radius, dtype=np.float64), ts.shape)
+        return tube(start + ts[:, None] * direction, np.tile(u, (len(ts), 1)), np.tile(w, (len(ts), 1)),
+                    radius, radius)
+
+    folds = []
     for side, sx in (("L", 1.0), ("R", -1.0)):
-        arm_dir = np.array([sx * math.sin(math.radians(45)), -math.cos(math.radians(45)), 0.0])
-        ts = np.arange(-0.05, 0.7501, 0.05)
-        radius = np.where(ts < -1e-9, 0.08, np.where(ts > ARM_LENGTH + 1e-9, 0.07, ARM_RADIUS))
-        u = np.array([sx * math.cos(math.radians(45)), math.sin(math.radians(45)), 0.0])
-        v, t = tube(SHOULDER[side] + ts[:, None] * arm_dir, np.tile(u, (len(ts), 1)),
-                    np.tile([0.0, 0.0, 1.0], (len(ts), 1)), radius, radius)
-        parts.append((f"arm.{side}", v, t, f"upperarm01.{side}"))
+        upper = np.array([sx * math.sin(math.radians(UPPER_ARM_DEG)), -math.cos(math.radians(UPPER_ARM_DEG)), 0.0])
+        e0 = np.array([sx * math.cos(math.radians(UPPER_ARM_DEG)), math.sin(math.radians(UPPER_ARM_DEG)), 0.0])
+        folds.append((SHOULDER[side] + ARMPIT_FOLD_AXIAL * upper - ARMPIT_FOLD_REACH * e0, f"upperarm01.{side}"))
+        fore = np.array([sx * math.sin(math.radians(FOREARM_DEG)), -math.cos(math.radians(FOREARM_DEG)),
+                         FOREARM_FORWARD])
+        fore /= np.linalg.norm(fore)
+        elbow = SHOULDER[side] + UPPER_ARM_LENGTH * upper
+        ts = np.arange(-0.05, 0.1501, 0.05)
+        parts.append((f"upperarm.{side}", *limb_tube(SHOULDER[side], upper, ts, np.where(ts < -1e-9, 0.08, ARM_RADIUS)),
+                      f"upperarm01.{side}"))
+        parts.append((f"upperarm2.{side}", *limb_tube(SHOULDER[side], upper, np.arange(0.15, 0.3001, 0.05), ARM_RADIUS),
+                      f"upperarm02.{side}"))
+        parts.append((f"forearm.{side}", *limb_tube(elbow, fore, np.arange(0.0, 0.3001, 0.05), FOREARM_RADIUS),
+                      f"lowerarm01.{side}"))
+        parts.append((f"hand.{side}", *limb_tube(elbow, fore, np.arange(0.35, 0.4501, 0.05), 0.07), f"wrist.{side}"))
 
         leg_dir = np.array([sx * math.sin(math.radians(5)), -math.cos(math.radians(5)), 0.0])
         ts = np.arange(0.10, 0.9001, 0.05)
@@ -269,7 +298,8 @@ def synthetic_body() -> SimpleNamespace:
         parts.append((f"leg.{side}", v, t, f"lowerleg01.{side}"))
 
         joints[f"upperarm01.{side}____head"] = SHOULDER[side].copy()
-        joints[f"wrist.{side}____head"] = SHOULDER[side] + ARM_LENGTH * arm_dir
+        joints[f"lowerarm01.{side}____head"] = elbow
+        joints[f"wrist.{side}____head"] = elbow + FOREARM_LENGTH * fore
         joints[f"upperleg01.{side}____head"] = HIP[side].copy()
         joints[f"foot.{side}____head"] = HIP[side] + LEG_LENGTH * leg_dir
     joints["breast.L____head"] = np.array([0.07, BREAST_Y, 0.05])
@@ -287,6 +317,9 @@ def synthetic_body() -> SimpleNamespace:
     ranges["free"] = np.arange(sum(map(len, vertices)), sum(map(len, vertices)) + 3)
     vertices.append(free)
     dominant += ["spine02"] * 3
+    ranges["armpit_fold"] = np.arange(sum(map(len, vertices)), sum(map(len, vertices)) + len(folds))
+    vertices.append(np.array([p for p, _ in folds]))
+    dominant += [bone for _, bone in folds]
     return SimpleNamespace(vertices=np.concatenate(vertices), tris=np.concatenate(tris), dominant=dominant,
                            rig=rig_with(SYNTHETIC_PARENT), joints=joints, ranges=ranges,
                            egg=style.Egg(np.array([0.0, 1.70, 0.06]), np.array([0.08, 0.10, 0.08])))
@@ -317,7 +350,7 @@ class LandmarksRegionsGirths(unittest.TestCase):
         self.assertEqual(set(self.lm), {
             "hps_left", "hps_right", "shoulder_left", "shoulder_right", "neck_base", "chest", "waist", "hip",
             "crotch", "ankle_left", "ankle_right", "shoulder_joint_left", "shoulder_joint_right",
-            "wrist_left", "wrist_right", "hip_joint_left", "hip_joint_right"})
+            "wrist_left", "wrist_right", "hip_joint_left", "hip_joint_right", "elbow_left", "elbow_right"})
         for name, p in self.lm.items():
             self.assertEqual(p.shape, (3,), name)
 
@@ -361,6 +394,8 @@ class LandmarksRegionsGirths(unittest.TestCase):
             np.testing.assert_allclose(self.lm[f"shoulder_joint_{side}"],
                                        self.body.joints[f"upperarm01.{key}____head"], atol=1e-6)
             np.testing.assert_allclose(self.lm[f"wrist_{side}"], self.body.joints[f"wrist.{key}____head"], atol=1e-6)
+            np.testing.assert_allclose(self.lm[f"elbow_{side}"], self.body.joints[f"lowerarm01.{key}____head"],
+                                       atol=1e-6)
             np.testing.assert_allclose(self.lm[f"hip_joint_{side}"],
                                        self.body.joints[f"upperleg01.{key}____head"], atol=1e-6)
 
@@ -394,16 +429,16 @@ class LandmarksRegionsGirths(unittest.TestCase):
         self.assertAlmostEqual(r["Neck"], 0.095, delta=2e-6)         # the flare's back, 0.09 + 0.005 off axis
         self.assertAlmostEqual(r["Head"], 0.08, delta=1e-9)          # max(ax, az) of the egg
         for side in ("Left", "Right"):
-            self.assertAlmostEqual(r[f"Arm{side}"], ARM_RADIUS, delta=2e-6)    # not the cap or the hand
+            self.assertAlmostEqual(r[f"Arm{side}"], ARM_RADIUS, delta=2e-6)    # not the cap, fold, forearm or hand
             self.assertAlmostEqual(r[f"Leg{side}"], LEG_RADIUS, delta=2e-6)    # not the foot ring
 
-    def test_limb_axes_run_from_the_joint_to_the_wrist_or_ankle(self):
-        root2 = math.sqrt(0.5)
+    def test_limb_axes_run_from_the_joint_to_the_elbow_or_ankle(self):
+        s, c = math.sin(math.radians(UPPER_ARM_DEG)), math.cos(math.radians(UPPER_ARM_DEG))
         for name, sx in (("ArmLeft", 1.0), ("ArmRight", -1.0)):
             cyl = self.regions[name]
             np.testing.assert_allclose(cyl["origin"], SHOULDER["L" if sx > 0 else "R"], atol=1e-9)
-            np.testing.assert_allclose(cyl["axis"], [sx * root2, -root2, 0.0], atol=2e-6)
-            np.testing.assert_allclose(cyl["e0"], [sx * root2, root2, 0.0], atol=2e-6)     # +Y less its axis part
+            np.testing.assert_allclose(cyl["axis"], [sx * s, -c, 0.0], atol=2e-6)     # the upper arm, not the wrist
+            np.testing.assert_allclose(cyl["e0"], [sx * c, s, 0.0], atol=2e-6)        # +Y less its axis part
         for name, sx in (("LegLeft", 1.0), ("LegRight", -1.0)):
             cyl = self.regions[name]
             np.testing.assert_allclose(cyl["origin"], HIP["L" if sx > 0 else "R"], atol=1e-9)
@@ -413,7 +448,8 @@ class LandmarksRegionsGirths(unittest.TestCase):
 
     def test_waist_radius_counts_every_non_arm_vertex_between_crotch_and_waist(self):
         b = self.body
-        non_arm = np.array([not bone.startswith("upperarm01") for bone in b.dominant])
+        arm_bones = ("upperarm01", "upperarm02", "lowerarm01", "wrist")
+        non_arm = np.array([not bone.startswith(arm_bones) for bone in b.dominant])
         inside = non_arm & (b.vertices[:, 1] >= 0.80 - 1e-12) & (b.vertices[:, 1] <= 1.10 + 1e-12)
         np.testing.assert_array_equal(self.result.region_vertices["Waist"], np.flatnonzero(inside))
 
@@ -431,12 +467,38 @@ class LandmarksRegionsGirths(unittest.TestCase):
             if name != "Head":
                 self.assertGreater(distance.max(), cyl["radius"] - 1.1e-6, name)
 
+    def test_arm_region_vertices_are_the_upper_arm_bones_in_the_outer_three_quarters_of_the_span(self):
+        v = self.body.vertices
+        for name, key in (("ArmLeft", "L"), ("ArmRight", "R")):
+            cyl = self.regions[name]
+            axial = (v - cyl["origin"]) @ cyl["axis"]
+            upper = np.array([bone in (f"upperarm01.{key}", f"upperarm02.{key}") for bone in self.body.dominant])
+            chosen = np.zeros(len(v), dtype=bool)
+            chosen[self.result.region_vertices[name]] = True
+            # The span starts a quarter of the way to the elbow, past the armpit fold. A ring that sits
+            # exactly on a span end may fall either way by rounding, so the comparison leaves a
+            # micron at each end.
+            start = UPPER_ARM_LENGTH / 4.0
+            self.assertTrue(np.all(upper[chosen]), f"{name}: only upper-arm bones")
+            self.assertTrue(np.all((axial[chosen] >= start - 1e-6) & (axial[chosen] <= UPPER_ARM_LENGTH + 1e-6)), name)
+            inner = upper & (axial > start + 1e-6) & (axial < UPPER_ARM_LENGTH - 1e-6)
+            self.assertTrue(np.all(chosen[inner]), f"{name}: every upper-arm vertex inside the span")
+            # the cap behind the joint and the armpit fold are upperarm01 but short of the span; the
+            # forearm reaches into the axial span near the elbow but is on another bone
+            self.assertFalse(np.any(chosen & (axial < start - 1e-6)), name)
+            fold = self.body.ranges["armpit_fold"][0 if key == "L" else 1]
+            self.assertTrue(upper[fold] and 0.0 < axial[fold] < start, name)
+            self.assertFalse(chosen[fold], name)
+            forearm = np.array([bone == f"lowerarm01.{key}" for bone in self.body.dominant])
+            self.assertTrue(np.any(forearm & (axial > 0.0) & (axial < UPPER_ARM_LENGTH)), name)
+            self.assertFalse(np.any(chosen & forearm), name)
+
     def test_head_region_vertices_are_the_ones_the_caller_gave(self):
         np.testing.assert_array_equal(self.result.region_vertices["Head"], self.body.ranges["egg_ring"])
 
     def test_limb_vertices_are_limited_to_the_axial_range(self):
         v = self.body.vertices
-        for name, length in (("ArmLeft", ARM_LENGTH), ("ArmRight", ARM_LENGTH), ("LegLeft", LEG_LENGTH),
+        for name, length in (("ArmLeft", UPPER_ARM_LENGTH), ("ArmRight", UPPER_ARM_LENGTH), ("LegLeft", LEG_LENGTH),
                              ("LegRight", LEG_LENGTH)):
             cyl = self.regions[name]
             axial = (v[self.result.region_vertices[name]] - cyl["origin"]) @ cyl["axis"]
@@ -456,7 +518,7 @@ class LandmarksRegionsGirths(unittest.TestCase):
             self.assertTrue(on_grid(g), name)
 
     def test_mirror_image_body_has_mirror_image_landmarks(self):
-        for name in ("hps", "shoulder", "ankle", "shoulder_joint", "wrist", "hip_joint"):
+        for name in ("hps", "shoulder", "ankle", "shoulder_joint", "elbow", "wrist", "hip_joint"):
             left, right = self.lm[f"{name}_left"], self.lm[f"{name}_right"]
             np.testing.assert_allclose(right, left * [-1, 1, 1], atol=2e-6, err_msg=name)
         for left, right in (("ArmLeft", "ArmRight"), ("LegLeft", "LegRight")):
