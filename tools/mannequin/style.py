@@ -4,7 +4,9 @@ MakeHuman's body has a face, ears and separate toes. A white display mannequin h
 of those, so this module reshapes two skinning-weight regions of the built body:
 
 * `make_egg_head` blends every head vertex toward an egg fitted to the skull
-  (`fit_egg`) and relaxes the region so the nose, ears and eye sockets melt away;
+  (`fit_egg`) and relaxes the region so the nose and ears melt away; the eye sockets and
+  mouth, which are cavities in the body mesh, are tucked just under the egg surface
+  (`cavity_vertices`);
 * `smooth_toes` Laplacian-smooths the toe region while holding the sole plane.
 
 Vertices are float64 (N, 3) in metres, Y up. Quads are int arrays (M, 4), counter-clockwise
@@ -17,7 +19,8 @@ import numpy as np
 
 from makehuman import Rig, descendants
 
-_PIN_WEIGHT = 0.999          # vertices at least this weighted sit on the egg
+_PIN_WEIGHT = 0.999          # vertices at least this weighted sit on the egg (or just under it)
+_CAVITY_DEPTH = 0.002        # metres: cavity vertices sit this far inside the egg surface
 _HEAD_ROUNDS = 30
 _RELAX_STEP = 0.5            # Laplacian step is _RELAX_STEP * weight
 _SOLE_BAND = 0.003           # metres above the lowest toe vertex that count as the sole
@@ -135,21 +138,28 @@ def _quad_normals(vertices: np.ndarray, quads: np.ndarray) -> np.ndarray:
     return np.cross(p[:, 2] - p[:, 0], p[:, 3] - p[:, 1])
 
 
-def _revert_flips(before: np.ndarray, after: np.ndarray, quads: np.ndarray) -> np.ndarray:
-    """`after`, except that every vertex of a quad whose normal no longer agrees with its
-    `before` normal (dot product <= 0) is put back where it was. Reverting can flip a
-    neighbouring quad that shares a moved vertex, so this repeats until nothing flips; it
-    ends because a reverted vertex never moves again."""
-    reference = _quad_normals(before, quads)
+def _facing(vertices: np.ndarray, quads: np.ndarray, centre: np.ndarray) -> np.ndarray:
+    """(M,) quad normal . (quad centroid - centre): positive when a quad faces away from `centre`."""
+    centroids = vertices[quads].mean(axis=1)
+    return (_quad_normals(vertices, quads) * (centroids - centre)).sum(axis=1)
+
+
+def _revert_flips(before: np.ndarray, after: np.ndarray, quads: np.ndarray,
+                  centre: np.ndarray) -> np.ndarray:
+    """`after`, except that every vertex of a quad that faced away from `centre` in `before` and
+    faces it in `after` is put back where it was. Quads that already faced the centre may turn
+    outward freely. Reverting can turn a neighbouring quad inward (it shares a moved vertex), so
+    this repeats until none does; it ends because a reverted vertex never moves again."""
+    protected = _facing(before, quads, centre) > 0.0
     result = after.copy()
     while True:
-        flipped = (reference * _quad_normals(result, quads)).sum(axis=1) <= 0.0
-        if not flipped.any():
+        turned = protected & (_facing(result, quads, centre) <= 0.0)
+        if not turned.any():
             return result
-        ids = np.unique(quads[flipped])
+        ids = np.unique(quads[turned])
         moved = ids[np.any(result[ids] != before[ids], axis=1)]
         if len(moved) == 0:
-            return result            # flipped already before the round; nothing left to undo
+            return result            # unreachable for protected quads; stops a loop on bad input
         result[moved] = before[moved]
 
 
@@ -172,28 +182,60 @@ class _Rings:
         return mean
 
 
+def cavity_vertices(vertices: np.ndarray, quads: np.ndarray, head_w: np.ndarray, egg: Egg) -> np.ndarray:
+    """(N,) bool: the head vertices (w >= 0.999) that face into the head, such as the eye sockets
+    and the mouth, which MakeHuman models as cavities in the body mesh. A vertex is one when its
+    normal (the normalised sum of its quads' normals) points toward the egg centre:
+    n . (p - c) < 0. Call it on the vertices before they are moved onto the egg."""
+    p = np.asarray(vertices, dtype=np.float64)
+    normal = np.zeros_like(p)
+    face_normals = _quad_normals(p, quads)
+    for corner in range(4):
+        np.add.at(normal, quads[:, corner], face_normals)
+    length = np.linalg.norm(normal, axis=1, keepdims=True)
+    normal = np.divide(normal, length, out=np.zeros_like(normal), where=length > 0.0)
+    return (np.asarray(head_w) >= _PIN_WEIGHT) & ((normal * (p - egg.centre)).sum(axis=1) < 0.0)
+
+
+def _pin_targets(egg: Egg, points: np.ndarray, cavity: np.ndarray) -> np.ndarray:
+    """Where pinned vertices live: on the egg surface along their ray from the centre, or for
+    cavity vertices `_CAVITY_DEPTH` inside it."""
+    surface = project_to_egg(egg, points)
+    out = surface - egg.centre
+    tucked = surface - _CAVITY_DEPTH * out / np.linalg.norm(out, axis=1, keepdims=True)
+    return np.where(cavity[:, np.newaxis], tucked, surface)
+
+
 def make_egg_head(vertices: np.ndarray, quads: np.ndarray, head_w: np.ndarray, egg: Egg) -> np.ndarray:
     """New vertex positions with the head turned into the egg; the input is not modified.
 
-    Each vertex first moves to x + w (P(x) - x), P being the projection onto the egg. Then 30
-    rounds of uniform Laplacian relaxation (step 0.5 w toward the mean of the 1-ring) run over
-    the region, each followed by projecting the w >= 0.999 vertices back onto the egg, so the
-    core stays on the egg while the mesh spreads evenly over it and the neck blend (0 < w < 1)
-    settles. A round that would flip a quad's normal against its pre-round normal is undone
-    for the vertices involved. Vertices with w = 0 are never touched."""
+    Each vertex first moves to x + w (P(x) - x), P being the projection onto the egg; the
+    pinned vertices (w >= 0.999) go all the way. Cavity vertices (`cavity_vertices` of the
+    original mesh: eye sockets, mouth) are pinned 2 mm inside the egg instead of on it, so they
+    do not fold over the face as a second skin. Then 30 rounds of uniform Laplacian relaxation
+    (step 0.5 w toward the mean of the 1-ring) run over the region, each followed by putting the
+    pinned vertices back on their ray's target, so the core stays on the egg while the mesh
+    spreads evenly over it and the neck blend (0 < w < 1) settles. A round that would turn a
+    quad that faced outward (normal . (centroid - egg centre) > 0) inward is undone for the
+    vertices involved; quads that face inward, such as those folded by the first projection,
+    may turn outward. Vertices with w = 0 are never touched."""
     w = np.clip(np.asarray(head_w, dtype=np.float64), 0.0, 1.0)
     v = np.array(vertices, dtype=np.float64)
+    cavity = cavity_vertices(v, quads, w, egg)
     moving = w > 0.0
     pinned = w >= _PIN_WEIGHT
-    v[moving] += w[moving, np.newaxis] * (project_to_egg(egg, v[moving]) - v[moving])
+    blend = np.where(pinned, 1.0, w)[moving, np.newaxis]
+    target = np.where(pinned[moving, np.newaxis], _pin_targets(egg, v[moving], cavity[moving]),
+                      project_to_egg(egg, v[moving]))
+    v[moving] += blend * (target - v[moving])
 
     rings = _Rings(quads, len(v))
     step = (_RELAX_STEP * w)[moving, np.newaxis]
     for _ in range(_HEAD_ROUNDS):
         relaxed = v.copy()
         relaxed[moving] += step * (rings.mean(v)[moving] - v[moving])
-        relaxed[pinned] = project_to_egg(egg, relaxed[pinned])
-        v = _revert_flips(v, relaxed, quads)
+        relaxed[pinned] = _pin_targets(egg, relaxed[pinned], cavity[pinned])
+        v = _revert_flips(v, relaxed, quads, egg.centre)
     return v
 
 

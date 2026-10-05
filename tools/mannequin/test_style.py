@@ -49,6 +49,16 @@ def outward(vertices: np.ndarray, quads: np.ndarray, centre: np.ndarray) -> np.n
     return (style._quad_normals(vertices, quads) * (centroids - centre)).sum(axis=1)
 
 
+def nosed_sphere() -> tuple[np.ndarray, np.ndarray]:
+    """The unit sphere scaled to r = 0.1 at the egg's centre, with a 2 cm "nose": the front pushed
+    forward along +z (not radially)."""
+    points, quads = cube_sphere(16)
+    vertices = EGG.centre + 0.1 * points
+    d2 = vertices[:, 0] ** 2 + (vertices[:, 1] - (EGG.centre[1] + 0.01)) ** 2
+    vertices[:, 2] += 0.02 * np.exp(-d2 / (2 * 0.02 ** 2)) * (points[:, 2] > 0)
+    return vertices, quads
+
+
 def rig_with(parent: dict[str, str | None], weights: dict[str, tuple[list[int], list[float]]]) -> makehuman.Rig:
     return makehuman.Rig(parent=parent, head_joint={b: b + "_h" for b in parent}, joints={},
                          weights={b: (np.array(i, dtype=np.int64), np.array(w)) for b, (i, w) in weights.items()})
@@ -198,16 +208,8 @@ class FitEgg(unittest.TestCase):
 
 
 class EggHead(unittest.TestCase):
-    def nosed_sphere(self):
-        points, quads = cube_sphere(16)
-        vertices = EGG.centre + 0.1 * points
-        # A 2 cm "nose": the front of the sphere pushed forward along +z, not radially.
-        d2 = vertices[:, 0] ** 2 + (vertices[:, 1] - (EGG.centre[1] + 0.01)) ** 2
-        vertices[:, 2] += 0.02 * np.exp(-d2 / (2 * 0.02 ** 2)) * (points[:, 2] > 0)
-        return vertices, quads
-
     def test_egg_head_removes_bumps(self):
-        vertices, quads = self.nosed_sphere()
+        vertices, quads = nosed_sphere()
         self.assertGreater(vertices[:, 2].max() - EGG.centre[2], 0.115)      # the bump is there
         out = style.make_egg_head(vertices, quads, np.ones(len(vertices)), EGG)
         self.assertEqual(out.shape, vertices.shape)
@@ -215,15 +217,23 @@ class EggHead(unittest.TestCase):
         self.assertLess(err.max(), 1e-6)
         self.assertGreater(outward(out, quads, EGG.centre).min(), 0.0)
 
+    def test_pinned_vertices_go_all_the_way_in_the_blend(self):
+        # w = 0.9995 is "pinned": it lands on the egg at once, not 99.95 % of the way there.
+        vertices, quads = nosed_sphere()
+        w = np.full(len(vertices), 0.9995)
+        with mock.patch.object(style, "_HEAD_ROUNDS", 0):
+            out = style.make_egg_head(vertices, quads, w, EGG)
+        np.testing.assert_allclose(style.egg_value(EGG, out), 1.0, atol=1e-9)
+
     def test_egg_head_relaxes_the_mesh_not_just_the_projection(self):
-        vertices, quads = self.nosed_sphere()
+        vertices, quads = nosed_sphere()
         w = np.ones(len(vertices))
         projected = style.project_to_egg(EGG, vertices)
         out = style.make_egg_head(vertices, quads, w, EGG)
         self.assertGreater(np.linalg.norm(out - projected, axis=1).max(), 1e-3)
 
     def test_zero_weight_vertices_never_move(self):
-        vertices, quads = self.nosed_sphere()
+        vertices, quads = nosed_sphere()
         w = np.where(vertices[:, 1] > EGG.centre[1], 1.0, 0.0)
         w[(vertices[:, 1] <= EGG.centre[1]) & (vertices[:, 1] > EGG.centre[1] - 0.03)] = 0.5
         out = style.make_egg_head(vertices, quads, w, EGG)
@@ -235,7 +245,7 @@ class EggHead(unittest.TestCase):
         np.testing.assert_allclose(style.egg_value(EGG, out[top]), 1.0, atol=1e-9)
 
     def test_input_is_not_modified_and_output_is_deterministic(self):
-        vertices, quads = self.nosed_sphere()
+        vertices, quads = nosed_sphere()
         before = vertices.copy()
         w = np.linspace(0.0, 1.0, len(vertices))
         first = style.make_egg_head(vertices, quads, w, EGG)
@@ -243,55 +253,162 @@ class EggHead(unittest.TestCase):
         np.testing.assert_array_equal(vertices, before)
         self.assertEqual(first.tobytes(), second.tobytes())
 
-    def test_relaxation_applies_the_flip_guard_every_round(self):
-        # A rough mesh: random radial and sideways noise on the sphere, so relaxing it wants to
-        # turn many quads over. All w = 1, so the post-blend state is just the projection.
-        rng = np.random.default_rng(1)
+    @staticmethod
+    def rough_sphere(jitter: float, seed: int) -> tuple[np.ndarray, np.ndarray]:
+        """Noise on the sphere radially and sideways: projecting it onto the egg folds many quads
+        and relaxing it wants to turn many more over."""
+        rng = np.random.default_rng(seed)
         points, quads = cube_sphere(8)
-        vertices = EGG.centre + 0.1 * points * (1 + 0.3 * rng.uniform(-1, 1, (len(points), 1)))
-        vertices += rng.normal(0.0, 0.009, vertices.shape)
+        vertices = EGG.centre + 0.1 * points * (1 + jitter * rng.uniform(-1, 1, (len(points), 1)))
+        vertices += rng.normal(0.0, 0.03 * jitter, vertices.shape)
+        return vertices, quads
+
+    @staticmethod
+    def after_the_blend(vertices: np.ndarray, quads: np.ndarray, w: np.ndarray) -> np.ndarray:
+        """make_egg_head with no relaxation rounds: just the blend onto the egg."""
+        with mock.patch.object(style, "_HEAD_ROUNDS", 0):
+            return style.make_egg_head(vertices, quads, w, EGG)
+
+    def test_quads_that_face_outward_never_turn_inward(self):
+        vertices, quads = self.rough_sphere(jitter=0.6, seed=0)
+        w = np.clip((vertices[:, 1] - EGG.centre[1] + 0.05) / 0.1, 0.0, 1.0)     # a soft lower edge, w = 0 below
+        faced_out = outward(self.after_the_blend(vertices, quads, w), quads, EGG.centre) > 0
+
+        def turned_in(result: np.ndarray) -> int:
+            return int((faced_out & (outward(result, quads, EGG.centre) <= 0)).sum())
+
+        self.assertEqual(turned_in(style.make_egg_head(vertices, quads, w, EGG)), 0)
+        with mock.patch.object(style, "_revert_flips", lambda before, after, quads, centre: after):
+            self.assertGreater(turned_in(style.make_egg_head(vertices, quads, w, EGG)), 5)   # the guard is what does it
+
+    def test_quads_folded_by_the_blend_can_unfold(self):
+        vertices, quads = self.rough_sphere(jitter=0.3, seed=1)
         w = np.ones(len(vertices))
-        start = style._quad_normals(style.project_to_egg(EGG, vertices), quads)
+        folded = outward(self.after_the_blend(vertices, quads, w), quads, EGG.centre) <= 0
+        self.assertGreater(folded.sum(), 20)
+        out = style.make_egg_head(vertices, quads, w, EGG)
+        still = folded & (outward(out, quads, EGG.centre) <= 0)
+        self.assertLess(still.sum() * 4, folded.sum())
 
-        def turned_over(result: np.ndarray) -> int:
-            return int(((start * style._quad_normals(result, quads)).sum(axis=1) <= 0).sum())
-
-        guarded = turned_over(style.make_egg_head(vertices, quads, w, EGG))
-        with mock.patch.object(style, "_revert_flips", lambda before, after, quads: after):
-            unguarded = turned_over(style.make_egg_head(vertices, quads, w, EGG))
-        self.assertGreater(unguarded, 20)
-        self.assertLess(guarded * 5, unguarded)
-
-    def test_flip_guard_reverts_every_vertex_of_a_flipped_quad(self):
-        before = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=float)
+    def test_flip_guard_reverts_every_vertex_of_a_quad_that_turns_inward(self):
+        c = np.array([0.0, 0.0, -1.0])
+        before = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=float)    # faces +z, away from c
         after = before.copy()
-        after[2] = [-0.5, -0.5, 0.0]                  # drags the far corner through the quad: normal flips
+        after[2] = [-0.5, -0.5, 0.0]                  # drags the far corner through the quad: it now faces -z
         after[0] += [0.05, 0.0, 0.0]                  # a harmless nudge that must also be undone with it
         quads = np.array([[0, 1, 2, 3]])
-        np.testing.assert_array_equal(style._revert_flips(before, after, quads), before)
+        np.testing.assert_array_equal(style._revert_flips(before, after, quads, c), before)
 
-    def test_flip_guard_keeps_moves_that_flip_nothing(self):
+    def test_flip_guard_keeps_moves_that_leave_quads_facing_outward(self):
+        c = np.array([0.0, 0.0, -1.0])
         before = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=float)
         after = before + np.array([[0.1, 0, 0], [0.1, 0.05, 0], [0.1, 0.1, 0], [0.1, 0.0, 0.2]])
         quads = np.array([[0, 1, 2, 3]])
-        np.testing.assert_array_equal(style._revert_flips(before, after, quads), after)
+        np.testing.assert_array_equal(style._revert_flips(before, after, quads, c), after)
+
+    def test_flip_guard_lets_an_inward_quad_turn_outward(self):
+        # The same square seen from the other side of it: it faces toward c to begin with, and the
+        # move that turns it over (what the old normal-against-normal rule forbade) is the cure.
+        c = np.array([0.0, 0.0, 1.0])
+        before = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=float)    # faces +z, toward c
+        after = before.copy()
+        after[2] = [-0.5, -0.5, 0.0]                  # faces -z, away from c
+        quads = np.array([[0, 1, 2, 3]])
+        self.assertLess(outward(before, quads, c)[0], 0)
+        self.assertGreater(outward(after, quads, c)[0], 0)
+        np.testing.assert_array_equal(style._revert_flips(before, after, quads, c), after)
+
+    def test_flip_guard_ignores_quads_that_were_already_inward(self):
+        # An inward quad that stays inward is nobody's regression: moving it is allowed.
+        c = np.array([0.0, 0.0, 1.0])
+        before = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=float)    # faces +z, toward c
+        after = before + np.array([[0.1, 0, 0], [0.1, 0.05, 0], [0.1, 0.1, 0], [0.1, 0.0, -0.2]])
+        quads = np.array([[0, 1, 2, 3]])
+        self.assertLess(outward(after, quads, c)[0], 0)
+        np.testing.assert_array_equal(style._revert_flips(before, after, quads, c), after)
 
     def test_flip_guard_cascades_to_neighbouring_quads(self):
-        # Two quads sharing the edge 1-2. Only the right quad is flipped by the round, but
+        # Two quads sharing the edge 1-2. Only the right quad turns inward in the round, but
         # reverting its vertices (1, 2, 4, 5) leaves the left quad with a moved vertex 3 beside
-        # an unmoved vertex 1, and that mix flips it. The guard must keep going.
+        # an unmoved vertex 1, and that mix turns it inward. The guard must keep going.
+        c = np.array([1.0, 0.5, -1.0])
         before = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [2, 0, 0], [2, 1, 0]], dtype=float)
         quads = np.array([[0, 1, 2, 3], [1, 4, 5, 2]])
         after = before.copy()
         after[1] = [3.0, 0.0, 0.0]
         after[3] = [2.0, 0.5, 0.0]
         after[5] = [0.0, -1.0, 0.0]
-        reference = style._quad_normals(before, quads)
-        flipped_after = (reference * style._quad_normals(after, quads)).sum(axis=1) <= 0
-        self.assertEqual(flipped_after.tolist(), [False, True])         # the setup is what we think it is
-        out = style._revert_flips(before, after, quads)
-        self.assertTrue(np.all((reference * style._quad_normals(out, quads)).sum(axis=1) > 0))
+        faced_out = outward(before, quads, c) > 0
+        turned_in = faced_out & (outward(after, quads, c) <= 0)
+        self.assertEqual(turned_in.tolist(), [False, True])             # the setup is what we think it is
+        out = style._revert_flips(before, after, quads, c)
+        self.assertTrue(np.all(outward(out, quads, c) > 0))
         np.testing.assert_array_equal(out, before)
+
+
+class CavityTuck(unittest.TestCase):
+    """A pocket in the sphere, like an eye socket: the quads around four vertices are turned
+    inside out and those vertices pushed 2 cm in, so their vertex normals face the centre."""
+    DEPTH = 0.002
+
+    def pocket_sphere(self):
+        points, quads = cube_sphere(16)
+        vertices = EGG.centre + 0.1 * points
+        aim = np.array([0.2, 0.1, 1.0]) / np.linalg.norm([0.2, 0.1, 1.0])
+        centroids = points[quads].mean(axis=1)
+        pocket = np.unique(quads[np.argmax(centroids @ aim)])               # the four corners of one quad
+        in_pocket = np.zeros(len(points), dtype=bool)
+        in_pocket[pocket] = True
+        touching = in_pocket[quads].any(axis=1)                              # 9 quads
+        quads = quads.copy()
+        quads[touching] = quads[touching][:, ::-1]
+        vertices[pocket] -= 0.02 * points[pocket]
+        return vertices, quads, in_pocket, touching
+
+    def test_cavity_vertices_flags_exactly_the_pocket(self):
+        vertices, quads, in_pocket, _ = self.pocket_sphere()
+        self.assertEqual(in_pocket.sum(), 4)
+        flagged = style.cavity_vertices(vertices, quads, np.ones(len(vertices)), EGG)
+        self.assertEqual(flagged.dtype, bool)
+        np.testing.assert_array_equal(flagged, in_pocket)
+
+    def test_only_fully_weighted_vertices_can_be_cavity(self):
+        vertices, quads, in_pocket, _ = self.pocket_sphere()
+        w = np.ones(len(vertices))
+        w[np.flatnonzero(in_pocket)[0]] = 0.998
+        flagged = style.cavity_vertices(vertices, quads, w, EGG)
+        self.assertEqual(flagged.sum(), 3)
+        self.assertFalse(flagged[np.flatnonzero(in_pocket)[0]])
+
+    def test_a_clean_sphere_has_no_cavity(self):
+        points, quads = cube_sphere(16)
+        vertices = EGG.centre + 0.1 * points
+        self.assertFalse(style.cavity_vertices(vertices, quads, np.ones(len(vertices)), EGG).any())
+        vertices, quads = nosed_sphere()
+        self.assertFalse(style.cavity_vertices(vertices, quads, np.ones(len(vertices)), EGG).any())
+
+    def test_pocket_ends_two_millimetres_inside_and_everything_else_on_the_egg(self):
+        vertices, quads, in_pocket, _ = self.pocket_sphere()
+        out = style.make_egg_head(vertices, quads, np.ones(len(vertices)), EGG)
+        surface = style.project_to_egg(EGG, out)
+        depth = np.linalg.norm(surface - out, axis=1)
+        np.testing.assert_allclose(depth[in_pocket], self.DEPTH, atol=1e-9)
+        self.assertTrue(np.all(style.egg_value(EGG, out[in_pocket]) < 1.0))
+        np.testing.assert_allclose(depth[~in_pocket], 0.0, atol=1e-9)
+
+    def test_no_outward_facing_surface_quad_turns_inward(self):
+        vertices, quads, in_pocket, touching = self.pocket_sphere()
+        out = style.make_egg_head(vertices, quads, np.ones(len(vertices)), EGG)
+        surface_quads = ~touching
+        self.assertGreater(outward(out, quads, EGG.centre)[surface_quads].min(), 0.0)
+
+    def test_the_tuck_is_part_of_the_blend_for_partial_weights(self):
+        # w < 0.999 vertices are never cavity and never tucked, whatever their normals say.
+        vertices, quads, in_pocket, _ = self.pocket_sphere()
+        w = np.where(in_pocket, 0.5, 1.0)
+        out = style.make_egg_head(vertices, quads, w, EGG)
+        depth = np.linalg.norm(style.project_to_egg(EGG, out) - out, axis=1)
+        np.testing.assert_allclose(depth[w >= 0.999], 0.0, atol=1e-9)
 
 
 class SmoothToes(unittest.TestCase):
