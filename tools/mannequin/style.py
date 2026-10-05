@@ -23,11 +23,15 @@ _PIN_WEIGHT = 0.999          # vertices at least this weighted sit on the egg (o
 _CAVITY_DEPTH = 0.002        # metres: cavity vertices sit this far inside the egg surface
 _HEAD_ROUNDS = 30
 _RELAX_STEP = 0.5            # Laplacian step is _RELAX_STEP * weight
-_SOLE_BAND = 0.003           # metres above the lowest toe vertex that count as the sole
+_SOLE_BAND = 0.0022          # metres above the lowest toe vertex that count as the sole (held at their height)
 _SECTION_ABOVE_EYES = 0.03   # the rig has no ear bones; above the ears is where the skull is bare
 _SECTION_HALF_THICKNESS = 0.005
 _CHIN_HALF_WIDTH = 0.02
 _RAY_ITERATIONS = 60
+_AREA_FLOOR = 3e-9           # m^2: no corner triangle of a head quad ends up smaller than this
+_UNTANGLE_TARGET = 2.0 * _AREA_FLOOR   # the untangler pushes corners up to this, so none ends on the floor
+_UNTANGLE_ROUNDS = 300       # descent steps before a head that is still folded is an error
+_UNTANGLE_STEP = 2e-4        # metres: the largest vertex move of one full descent step
 
 
 # --------------------------------------------------------------------------- regions
@@ -144,23 +148,52 @@ def _facing(vertices: np.ndarray, quads: np.ndarray, centre: np.ndarray) -> np.n
     return (_quad_normals(vertices, quads) * (centroids - centre)).sum(axis=1)
 
 
+def _corners(vertices: np.ndarray, quads: np.ndarray, centre: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The four corner triangles of every quad: corner j is (p[j-1], p[j], p[j+1]), which is also
+    what `triangulate` cuts a quad into, whichever diagonal it takes. Returns (M, 4) arrays:
+    the triangle's normal . (centroid - centre), positive when it faces away from `centre`, and its area."""
+    p = vertices[quads]
+    prev, nxt = np.roll(p, 1, axis=1), np.roll(p, -1, axis=1)
+    normal = np.cross(p - prev, nxt - p)
+    centroid = (prev + p + nxt) / 3.0
+    return (normal * (centroid - centre)).sum(axis=2), 0.5 * np.linalg.norm(normal, axis=2)
+
+
 def _revert_flips(before: np.ndarray, after: np.ndarray, quads: np.ndarray,
                   centre: np.ndarray) -> np.ndarray:
-    """`after`, except that every vertex of a quad that faced away from `centre` in `before` and
-    faces it in `after` is put back where it was. Quads that already faced the centre may turn
-    outward freely. Reverting can turn a neighbouring quad inward (it shares a moved vertex), so
-    this repeats until none does; it ends because a reverted vertex never moves again."""
-    protected = _facing(before, quads, centre) > 0.0
+    """`after`, except that every moved vertex of a quad that went wrong in the move is put back
+    where it was. A quad goes wrong when
+
+    * it faced away from `centre` in `before` and faces it in `after`, as a quad or through any
+      one of its four corner triangles (a concave quad can face outward as a whole and still have
+      one corner that faces in, which is the triangle `triangulate` may then cut out of it); or
+    * a corner triangle's area is below `_AREA_FLOOR` and smaller than it was (the Laplacian step
+      contracts two neighbouring vertices with the same 1-ring onto each other).
+
+    Quads and corners that were already inward, or already tiny, may change freely as long as they
+    do not get worse. Reverting can turn a neighbouring quad bad (it shares a moved vertex), so
+    this repeats until none is; it ends because a reverted vertex never moves again. Only quads
+    with a moved vertex can go wrong, so only those are looked at."""
     result = after.copy()
+    moved = np.any(after != before, axis=1)
+    quads = quads[moved[quads].any(axis=1)]
+    if len(quads) == 0:
+        return result
+    quad_out = _facing(before, quads, centre) > 0.0
+    corner_out_before, area_before = _corners(before, quads, centre)
+    corner_out = corner_out_before > 0.0
     while True:
-        turned = protected & (_facing(result, quads, centre) <= 0.0)
+        corner_out_now, area_now = _corners(result, quads, centre)
+        turned = quad_out & (_facing(result, quads, centre) <= 0.0)
+        turned |= (corner_out & (corner_out_now <= 0.0)).any(axis=1)
+        turned |= ((area_now < _AREA_FLOOR) & (area_now < area_before)).any(axis=1)
         if not turned.any():
             return result
         ids = np.unique(quads[turned])
-        moved = ids[np.any(result[ids] != before[ids], axis=1)]
-        if len(moved) == 0:
+        back = ids[np.any(result[ids] != before[ids], axis=1)]
+        if len(back) == 0:
             return result            # unreachable for protected quads; stops a loop on bad input
-        result[moved] = before[moved]
+        result[back] = before[back]
 
 
 class _Rings:
@@ -206,6 +239,101 @@ def _pin_targets(egg: Egg, points: np.ndarray, cavity: np.ndarray) -> np.ndarray
     return np.where(cavity[:, np.newaxis], tucked, surface)
 
 
+def _corner_sizes(vertices: np.ndarray, quads: np.ndarray, centre: np.ndarray,
+                  on_egg: np.ndarray) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """How big each corner triangle of `quads` is, and how that changes when its vertices move.
+
+    Corner j of a quad is (a, p, b) = (p[j-1], p[j], p[j+1]) with normal n = (p - a) x (b - p).
+    Where `on_egg` is true (all three vertices on the egg surface) the size is the signed area
+    seen from outside, d . n / 2 with d the unit direction from `centre` to the centroid: negative
+    when the triangle is folded over. Elsewhere it is the plain area, d being the triangle's own
+    unit normal. Returns the (M, 4) sizes and their gradients with respect to a, p and b (each
+    (M, 4, 3), with d held fixed)."""
+    p = vertices[quads]
+    a, b = np.roll(p, 1, axis=1), np.roll(p, -1, axis=1)
+    normal = np.cross(p - a, b - p)
+    direction = np.where(on_egg[..., np.newaxis], (a + p + b) / 3.0 - centre, normal)
+    length = np.linalg.norm(direction, axis=2, keepdims=True)
+    direction = np.divide(direction, length, out=np.zeros_like(direction), where=length > 0.0)
+    size = 0.5 * (normal * direction).sum(axis=2)
+    return size, (0.5 * np.cross(p - b, direction),
+                  0.5 * np.cross(b - a, direction),
+                  0.5 * np.cross(direction, p - a))
+
+
+def _untangle(v: np.ndarray, quads: np.ndarray, rings: _Rings, egg: Egg, moving: np.ndarray,
+              pinned: np.ndarray, cavity: np.ndarray) -> np.ndarray:
+    """`v` with every folded or collapsed corner triangle of the head turned outward and made at
+    least `_AREA_FLOOR` big, or RuntimeError if the descent cannot manage it.
+
+    A corner is bad when its three vertices are on the egg surface (pinned, not cavity) and it
+    faces inward or is smaller than the floor, or when it is any other corner of a quad of the
+    head and is smaller than the floor. Relaxation cannot cure these: a rim of the nostril that
+    the projection folded has a 1-ring that winds twice around its vertex, and the guard, which
+    refuses any move that turns another quad inward, holds the vertices where they are. So the
+    pinned vertices of the bad quads and their 1-rings go down the gradient of
+    sum(max(0, target - size)^2) over the corners they touch, re-projected onto the egg after
+    every step, with the step halved until the penalty falls. Every vertex moves at once, so a
+    mirrored fold is cured identically."""
+    surface = pinned & ~cavity
+    on_egg = surface[np.roll(quads, 1, axis=1)] & surface[quads] & surface[np.roll(quads, -1, axis=1)]
+    head = np.flatnonzero(moving[quads].any(axis=1))
+
+    def folded(points: np.ndarray, which: np.ndarray) -> np.ndarray:
+        size, _ = _corner_sizes(points, quads[which], egg.centre, on_egg[which])
+        return (size < _AREA_FLOOR).any(axis=1)
+
+    bad = head[folded(v, head)]
+    if len(bad) == 0:
+        return v
+    free = np.zeros(len(v), dtype=bool)
+    free[quads[bad]] = True
+    near = free.copy()
+    near[rings.edges[free[rings.edges[:, 0]], 1]] = True
+    near[rings.edges[free[rings.edges[:, 1]], 0]] = True
+    free = near & pinned
+    touched = np.flatnonzero(free[quads].any(axis=1))      # every quad the descent can change
+    local, local_on_egg = quads[touched], on_egg[touched]
+
+    def penalty(points: np.ndarray) -> float:
+        size, _ = _corner_sizes(points, local, egg.centre, local_on_egg)
+        return float((np.maximum(0.0, _UNTANGLE_TARGET - size) ** 2).sum())
+
+    def gradient(points: np.ndarray) -> np.ndarray:
+        size, pieces = _corner_sizes(points, local, egg.centre, local_on_egg)
+        lack = np.maximum(0.0, _UNTANGLE_TARGET - size)[..., np.newaxis]
+        grad = np.zeros_like(points)
+        for ids, piece in zip((np.roll(local, 1, axis=1), local, np.roll(local, -1, axis=1)), pieces):
+            np.add.at(grad, ids.ravel(), (-2.0 * lack * piece).reshape(-1, 3))
+        grad[~free] = 0.0
+        return grad
+
+    current = penalty(v)
+    scale = 1.0
+    for _ in range(_UNTANGLE_ROUNDS):
+        if not folded(v, touched).any():
+            break
+        grad = gradient(v)
+        largest = np.abs(grad).max()
+        if largest == 0.0:
+            break
+        for _ in range(40):
+            moved = v - (scale * _UNTANGLE_STEP / largest) * grad
+            moved[free] = _pin_targets(egg, moved[free], cavity[free])
+            trial = penalty(moved)
+            if trial < current:
+                break
+            scale *= 0.5
+        else:
+            break                                          # no step lowers the penalty: a local minimum
+        v, current, scale = moved, trial, min(1.0, 2.0 * scale)
+    left = int(folded(v, head).sum())
+    if left:
+        raise RuntimeError(f"make_egg_head: {left} head quads are still folded or collapsed after "
+                           f"{_UNTANGLE_ROUNDS} untangling steps")
+    return v
+
+
 def make_egg_head(vertices: np.ndarray, quads: np.ndarray, head_w: np.ndarray, egg: Egg) -> np.ndarray:
     """New vertex positions with the head turned into the egg; the input is not modified.
 
@@ -215,10 +343,12 @@ def make_egg_head(vertices: np.ndarray, quads: np.ndarray, head_w: np.ndarray, e
     do not fold over the face as a second skin. Then 30 rounds of uniform Laplacian relaxation
     (step 0.5 w toward the mean of the 1-ring) run over the region, each followed by putting the
     pinned vertices back on their ray's target, so the core stays on the egg while the mesh
-    spreads evenly over it and the neck blend (0 < w < 1) settles. A round that would turn a
-    quad that faced outward (normal . (centroid - egg centre) > 0) inward is undone for the
-    vertices involved; quads that face inward, such as those folded by the first projection,
-    may turn outward. Vertices with w = 0 are never touched."""
+    spreads evenly over it and the neck blend (0 < w < 1) settles. `_revert_flips` undoes the
+    part of a round that would turn a quad that faced outward (normal . (centroid - egg centre)
+    > 0) inward, through the quad or any of its corner triangles, or shrink a corner triangle
+    below `_AREA_FLOOR`; quads that face inward, such as those folded by the first projection,
+    may turn outward. What that leaves folded or collapsed on the egg surface (the rims of the
+    nostrils) `_untangle` fixes, or it raises. Vertices with w = 0 are never touched."""
     w = np.clip(np.asarray(head_w, dtype=np.float64), 0.0, 1.0)
     v = np.array(vertices, dtype=np.float64)
     cavity = cavity_vertices(v, quads, w, egg)
@@ -236,14 +366,14 @@ def make_egg_head(vertices: np.ndarray, quads: np.ndarray, head_w: np.ndarray, e
         relaxed[moving] += step * (rings.mean(v)[moving] - v[moving])
         relaxed[pinned] = _pin_targets(egg, relaxed[pinned], cavity[pinned])
         v = _revert_flips(v, relaxed, quads, egg.centre)
-    return v
+    return _untangle(v, quads, rings, egg, moving, pinned, cavity)
 
 
 def smooth_toes(vertices: np.ndarray, quads: np.ndarray, toe_w: np.ndarray, rounds: int = 40) -> np.ndarray:
     """New vertex positions with the toes smoothed into one mitten; the input is not modified.
 
     Uniform Laplacian relaxation, step 0.5 w toward the mean of the 1-ring, `rounds` times.
-    Vertices that start within 3 mm of the lowest vertex of the toe region (w > 0) are the
+    Vertices that start within 2.2 mm of the lowest vertex of the toe region (w > 0) are the
     sole: they slide in x and z only, so the foot stays flat on the floor. Vertices with
     w = 0 are never touched."""
     w = np.clip(np.asarray(toe_w, dtype=np.float64), 0.0, 1.0)

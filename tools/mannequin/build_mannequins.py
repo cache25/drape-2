@@ -45,6 +45,8 @@ AGE, MUSCLE, WEIGHT, PROPORTIONS = 0.5, 0.75, 0.5, 1.0
 ARM_DEG, LEG_DEG = 45.0, 5.0
 HEIGHT_TOLERANCE = 0.0005         # metres
 MAX_BISECTIONS = 40
+MIN_TRIANGLE_AREA = 1e-9           # m^2, on the rounded mesh: spec section 9 says 1e-10, with 10x for rounding
+FOOT_SECTION_Y = 0.01              # metres: the horizontal section there is one loop per foot (spec section 9)
 HEAD_PIN_WEIGHT = 0.999           # head vertices at least this weighted sit on the egg
 
 BODIES = {"male": (1.0, 1.80), "female": (0.0, 1.70)}    # name -> (gender slider, target height in metres)
@@ -231,6 +233,30 @@ def write_body(out_dir: Path, name: str, body: np.ndarray, tris: np.ndarray, m: 
 
 # --------------------------------------------------------------------------- driver
 
+def check_mesh(name: str, body: np.ndarray, tris: np.ndarray, head_vertices: np.ndarray, egg: style.Egg) -> None:
+    """Raise if the rounded mesh about to be written breaks a check of the spec's section 9 that
+    the loader's tests make on the committed file: no triangle under MIN_TRIANGLE_AREA, no
+    triangle with all three vertices on the egg surface facing into the head, and exactly one
+    loop per foot in the horizontal section at FOOT_SECTION_Y."""
+    a, b, c = body[tris[:, 0]], body[tris[:, 1]], body[tris[:, 2]]
+    normal = np.cross(b - a, c - a)
+    area = 0.5 * np.linalg.norm(normal, axis=1)
+    if area.min() < MIN_TRIANGLE_AREA:
+        raise RuntimeError(f"{name}: {int((area < MIN_TRIANGLE_AREA).sum())} triangles are smaller than "
+                           f"{MIN_TRIANGLE_AREA} m^2 (smallest {area.min():.3e})")
+    on_egg = np.zeros(len(body), dtype=bool)
+    on_egg[head_vertices] = True
+    head = on_egg[tris].all(axis=1)
+    facing = (normal[head] * ((a + b + c)[head] / 3.0 - egg.centre)).sum(axis=1)
+    if (facing <= 0.0).any():
+        raise RuntimeError(f"{name}: {int((facing <= 0.0).sum())} head triangles face into the egg")
+    for side, sign in (("left", 1.0), ("right", -1.0)):
+        loops = measure.section_loops(body, tris, FOOT_SECTION_Y, sign * body[:, 0] > 0.0)
+        if loops != 1:
+            raise RuntimeError(f"{name}: the section at y = {FOOT_SECTION_Y} m has {loops} loops under the "
+                               f"{side} foot, not 1")
+
+
 def build_and_write(src: Source, name: str, out_dir: Path, log: Callable[[str], None]) -> str:
     gender, target = BODIES[name]
     n = len(src.base.body_ids)
@@ -248,6 +274,7 @@ def build_and_write(src: Source, name: str, out_dir: Path, log: Callable[[str], 
     # Round first: everything below is measured from the numbers that get written.
     body = np.round(built.vertices[:n], 6) + 0.0
     tris = pose.triangulate(body, src.base.body_quads)
+    check_mesh(name, body, tris, built.head_vertices, built.egg)
     dominant = measure.dominant_bones(src.rig, n)
     m = measure.measure_body(body, tris, dominant, src.rig, built.joints, built.egg, built.head_vertices)
     write_body(out_dir, name, body, tris, m, built)

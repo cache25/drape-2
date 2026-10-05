@@ -99,6 +99,57 @@ class SectionPoints(unittest.TestCase):
                                                 np.zeros(0, dtype=bool)).shape, (0, 2))
 
 
+def sheet_mesh(heights: np.ndarray, cell: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
+    """An open height field: vertex (i, j) is at (i * cell, heights[i, j], j * cell), two triangles per cell."""
+    n, m = heights.shape
+    vertices = np.array([[i * cell, heights[i, j], j * cell] for i in range(n) for j in range(m)])
+    tris = []
+    for i in range(n - 1):
+        for j in range(m - 1):
+            a, b, c, d = i * m + j, (i + 1) * m + j, (i + 1) * m + j + 1, i * m + j + 1
+            tris += [(a, b, c), (a, c, d)]
+    return vertices, np.array(tris, dtype=np.int64)
+
+
+class SectionLoops(unittest.TestCase):
+    def test_a_box_is_cut_in_one_loop(self):
+        vertices, tris = box_mesh(1.0, 1.0, 1.0)
+        self.assertEqual(measure.section_loops(vertices, tris, 0.5, np.ones(8, dtype=bool)), 1)
+
+    def test_two_boxes_are_two_loops_and_the_mask_chooses(self):
+        a, ta = box_mesh(1.0, 1.0, 1.0)
+        b, tb = box_mesh(1.0, 1.0, 1.0)
+        b[:, 0] += 3.0
+        vertices, tris = np.vstack([a, b]), np.vstack([ta, tb + 8])
+        everything = np.ones(16, dtype=bool)
+        self.assertEqual(measure.section_loops(vertices, tris, 0.5, everything), 2)
+        self.assertEqual(measure.section_loops(vertices, tris, 0.5, np.arange(16) < 8), 1)
+        self.assertEqual(measure.section_loops(vertices, tris, 0.5, np.zeros(16, dtype=bool)), 0)
+
+    def test_a_plane_above_or_below_everything_cuts_nothing(self):
+        vertices, tris = box_mesh(1.0, 1.0, 1.0)
+        for y in (-0.5, 2.0):
+            self.assertEqual(measure.section_loops(vertices, tris, y, np.ones(8, dtype=bool)), 0)
+
+    def test_a_plane_through_vertices_counts_each_loop_once(self):
+        # The top face is on the plane: its vertices count as above it, so the box is cut along
+        # the side faces in one loop; the bottom face's plane has everything above it: no loop.
+        vertices, tris = box_mesh(1.0, 1.0, 1.0)
+        self.assertEqual(measure.section_loops(vertices, tris, 1.0, np.ones(8, dtype=bool)), 1)
+        self.assertEqual(measure.section_loops(vertices, tris, 0.0, np.ones(8, dtype=bool)), 0)
+
+    def test_a_ridge_between_two_pits_splits_the_section_until_it_is_lower_than_the_cut(self):
+        heights = np.full((9, 9), 3.0)
+        heights[2:4, 2:7] = 0.0          # a pit
+        heights[5:7, 2:7] = 0.0          # another pit, one row of ridge between them (row 4)
+        heights[4, 2:7] = 2.0            # the ridge
+        vertices, tris = sheet_mesh(heights)
+        everything = np.ones(len(vertices), dtype=bool)
+        self.assertEqual(measure.section_loops(vertices, tris, 1.0, everything), 2)     # below the ridge
+        self.assertEqual(measure.section_loops(vertices, tris, 2.5, everything), 1)     # over the ridge: one pit
+        self.assertEqual(measure.section_loops(vertices, tris, 3.5, everything), 0)
+
+
 class DominantBones(unittest.TestCase):
     PARENT = {"root": None, "a": "root", "b": "root", "c": "a"}
 

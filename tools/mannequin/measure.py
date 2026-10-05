@@ -77,6 +77,37 @@ def section_points(vertices: np.ndarray, tris: np.ndarray, y: float, vertex_mask
     return np.concatenate(found)
 
 
+def section_loops(vertices: np.ndarray, tris: np.ndarray, y: float, vertex_mask: np.ndarray) -> int:
+    """How many closed loops the horizontal plane at height `y` cuts in the triangles whose three
+    vertices are all in `vertex_mask`.
+
+    A vertex exactly on the plane counts as above it, so the plane cuts every triangle it
+    touches along exactly two edges. Two cut edges belong to one loop when a triangle has both;
+    a loop is a connected chain of them. Exact mesh connectivity, not distances: two loops that
+    run 1 micron apart are two loops."""
+    vertices = np.asarray(vertices, dtype=np.float64)
+    tris = np.asarray(tris).reshape(-1, 3)
+    tris = tris[np.asarray(vertex_mask, dtype=bool)[tris].all(axis=1)]
+    above = vertices[:, 1] >= y
+    cut = above[tris].sum(axis=1)
+    tris = tris[(cut == 1) | (cut == 2)]
+    n = len(vertices)
+    parent: dict[int, int] = {}
+
+    def find(a: int) -> int:
+        parent.setdefault(a, a)
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for tri in tris.tolist():
+        crossed = [min(a, b) * n + max(a, b) for a, b in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0]))
+                   if above[a] != above[b]]
+        parent[find(crossed[0])] = find(crossed[1])
+    return len({find(edge) for edge in list(parent)})
+
+
 # --------------------------------------------------------------------------- body parts
 
 def dominant_bones(rig: Rig, n: int) -> list[str]:
