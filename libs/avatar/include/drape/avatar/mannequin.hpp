@@ -22,7 +22,7 @@ struct Landmarks {
 // A committed mannequin from assets/mannequins (built by tools/mannequin/build_mannequins.py):
 // metres, Y up, facing +Z, lowest vertex at y = 0, the character's left at +x.
 struct Mannequin {
-  TriangleMesh mesh;                     // one closed component
+  TriangleMesh mesh;                     // closed manifold (checked on load); one component in the committed assets
   BodyRegions regions;                   // all eight regions
   Landmarks landmarks;
   std::map<std::string, double> girths;  // chest, waist, hip, neck (m)
@@ -31,7 +31,8 @@ struct Mannequin {
 
 // Reads <mannequinDir>/<body>.obj and <body>.json. The first overload reads DRAPE_ASSET_DIR/mannequins.
 // A missing or malformed file throws std::runtime_error whose message starts with the file path
-// (and the line number, for OBJ syntax errors).
+// (and the line number, for OBJ syntax errors). An OBJ that is empty, truncated or otherwise not a
+// closed manifold throws "<obj path>: mesh is not a closed manifold".
 Mannequin loadMannequin(BodyType type);
 Mannequin loadMannequin(BodyType type, const std::filesystem::path& mannequinDir);
 

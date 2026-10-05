@@ -514,3 +514,28 @@ TEST(MannequinLoader, TruncatedJsonNamesTheFile) {
   const std::string message = loadFailure(BodyType::Male, dir.path());
   EXPECT_TRUE(contains(message, (dir.path() / "male.json").string())) << message;
 }
+
+TEST(MannequinLoader, TruncatedObjNamesTheFile) {
+  std::ifstream in(assetDir() / "male.obj", std::ios::binary);
+  std::ostringstream whole;
+  whole << in.rdbuf();
+  const std::string obj = whole.str();
+  const std::size_t firstFace = obj.find("\nf ");
+  ASSERT_NE(firstFace, std::string::npos);
+  const std::size_t midFaces = obj.find('\n', firstFace + (obj.size() - firstFace) / 2);
+  ASSERT_NE(midFaces, std::string::npos);
+
+  const std::pair<const char*, std::string> cuts[] = {
+      {"empty file", ""},
+      {"cut at a line boundary partway through the faces", obj.substr(0, midFaces + 1)},
+      {"cut inside the last index", obj.substr(0, obj.size() - 3)}};
+  for (const auto& [what, text] : cuts) {
+    SCOPED_TRACE(what);
+    TempDir dir;
+    writeText(dir.path() / "male.obj", text);
+    fs::copy_file(assetDir() / "male.json", dir.path() / "male.json");
+    const std::string message = loadFailure(BodyType::Male, dir.path());
+    EXPECT_TRUE(contains(message, (dir.path() / "male.obj").string())) << message;
+    EXPECT_TRUE(contains(message, "not a closed manifold")) << message;
+  }
+}

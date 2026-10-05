@@ -86,7 +86,10 @@ Mannequin loadMannequin(BodyType type) { return loadMannequin(type, fs::path(DRA
 Mannequin loadMannequin(BodyType type, const fs::path& mannequinDir) {
   const std::string name(bodyName(type));
   Mannequin m;
-  m.mesh = readObjTriangles(mannequinDir / (name + ".obj"));
+  const fs::path objPath = mannequinDir / (name + ".obj");
+  m.mesh = readObjTriangles(objPath);
+  // An empty or truncated OBJ parses as a smaller mesh; the committed meshes are closed (false for no triangles).
+  if (!isClosedManifold(m.mesh)) fail(objPath, "mesh is not a closed manifold");
   readDescription(mannequinDir / (name + ".json"), m);
   return m;
 }
