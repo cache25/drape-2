@@ -1,7 +1,7 @@
 # Drape — Mannequins (Phase A2) Design
 
 **Date:** 2026-10-04
-**Status:** Draft for review
+**Status:** Approved 2026-10-04; amended during execution (arm cylinders follow the upper arm, Section 6; women's test tee and body-aware hem target, Section 9; foot section at 1 cm)
 **Amends:** `2026-10-01-drape-milestone-1-design.md` Sections 8.1, 12.5 and 17 (amendments listed in Section 10)
 **Reference:** Ian's photos of a white full-body male display mannequin: egg-shaped featureless head, toned athletic torso (pecs, abs), arms hanging slightly away from the body, legs slightly apart.
 
@@ -74,7 +74,7 @@ Steps, per body:
 
 Landmarks: `hps_left`, `hps_right` (high point of shoulder), `shoulder_left`, `shoulder_right`, `neck_base`, `chest`, `waist`, `hip`, `crotch`, `ankle_left`, `ankle_right` (positions in metres).
 
-Region cylinders: one per `BodyRegion` (`Torso`, `Neck`, `Head`, `ArmLeft`, `ArmRight`, `LegLeft`, `LegRight`, `Waist`). They use the existing `RegionCylinder` fields and the conventions in `body_regions.hpp`: Torso and Neck anchored on the body axis at neck-base height; arms at the shoulder joints along the posed arm axis; legs at the hip joints along the posed leg axis; Waist on the body axis at waist height; Head at the head joint. Each radius is the largest distance from the axis to that part's vertices.
+Region cylinders: one per `BodyRegion` (`Torso`, `Neck`, `Head`, `ArmLeft`, `ArmRight`, `LegLeft`, `LegRight`, `Waist`). They use the existing `RegionCylinder` fields and the conventions in `body_regions.hpp`: Torso and Neck anchored on the body axis at neck-base height; arms at the shoulder joints along the posed upper arm (shoulder joint → elbow, radius over the upper-arm vertices past the first quarter, which excludes the armpit fold); legs at the hip joints along the posed leg axis; Waist on the body axis at waist height; Head at the head joint. Each radius is the largest distance from the axis to that part's vertices.
 
 ## 7. Loader (`drape_avatar`)
 
@@ -118,8 +118,8 @@ Mannequin loadMannequin(BodyType type, const std::filesystem::path& assetDir);
 - Loader: a missing file and a truncated file each throw with the file name.
 
 **Garment:**
-- Male: the test tee drapes and settles at every size (XS–XXL) at Draft. Settled within 15 s simulated, assembly gap < 1 mm, penetration ≤ 2 mm, mean hem height within 3 cm of (HPS height − body length).
-- Female: the same, at every size.
+- Male: the test tee drapes and settles at every size (XS–XXL) at Draft. Settled within 15 s simulated, assembly gap < 1 mm, penetration ≤ 2 mm, mean hem height within 3 cm of (HPS height − body length + take-up), where take-up = |chest − HPS| − (HPS y − chest y) accounts for the front running over the chest.
+- Female: the same, at every size, in a women's cut of the test tee (`test_tee_womens`). The men's tee's shoulder points land about 7.5 cm past hers on the 45° arm, an unstable fit that slides off one shoulder.
 - Male at Standard, size M.
 - Fast suite: male M at Draft. The other sizes and the female runs are labelled `slow`.
 
