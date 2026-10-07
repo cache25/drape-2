@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <functional>
+#include <initializer_list>
 #include <string>
 
 #include "drape/garment/shapes.hpp"
@@ -15,18 +16,18 @@ struct TeeSpec {
   double C, L, S, SL, SO, W, NW, FND, BND, AD, SD, H;
 };
 
-TeeSpec readSpec(const std::map<std::string, double>& spec, const SpecTable& table) {
+TeeSpec readSpec(const std::map<std::string, double>& spec, const SpecTable& table, const std::string& id) {
   for (const auto& pom : table.poms) {
     auto it = spec.find(pom.key);
-    if (it == spec.end()) throw GeneratorError("test_tee: missing '" + pom.key + "'");
-    if (!(it->second > 0)) throw GeneratorError("test_tee: '" + pom.key + "' must be > 0");
+    if (it == spec.end()) throw GeneratorError(id + ": missing '" + pom.key + "'");
+    if (!(it->second > 0)) throw GeneratorError(id + ": '" + pom.key + "' must be > 0");
   }
   TeeSpec s{spec.at("chest_width"),  spec.at("body_length"),     spec.at("shoulder_width"), spec.at("sleeve_length"),
             spec.at("sleeve_opening"), spec.at("bicep_width"),   spec.at("neck_width"),     spec.at("front_neck_drop"),
             spec.at("back_neck_drop"), spec.at("armhole_depth"), spec.at("shoulder_drop"),  spec.at("neck_rib_height")};
   // Each requirement keeps at least 2 cm between the two points the POMs place.
-  auto require = [](bool ok, const char* message) {
-    if (!ok) throw GeneratorError(std::string("test_tee: ") + message);
+  auto require = [&id](bool ok, const char* message) {
+    if (!ok) throw GeneratorError(id + ": " + message);
   };
   require(s.AD > s.SD + 0.02, "'armhole_depth' must exceed 'shoulder_drop' by at least 0.02 m");
   require(s.NW < s.S - 0.02, "'neck_width' must be at least 0.02 m less than 'shoulder_width'");
@@ -69,16 +70,16 @@ CubicBezier capRight(const TeeSpec& s, double ch) {
   return {{s.W, s.SL - ch}, {0.75 * s.W, s.SL - 0.45 * ch}, {0.40 * s.W, s.SL}, {0, s.SL}};
 }
 
-double solveCapHeight(const TeeSpec& s, double armholeLength) {
+double solveCapHeight(const TeeSpec& s, double armholeLength, const std::string& id) {
   auto f = [&](double ch) { return length(capRight(s, ch)) - armholeLength; };
   double lo = 0.02;
   double hi = s.SL - 0.02;
   if (hi <= lo || f(hi) < 0) {
-    throw GeneratorError("test_tee: no sleeve cap fits: 'sleeve_length' is too short for the armhole set by "
+    throw GeneratorError(id + ": no sleeve cap fits: 'sleeve_length' is too short for the armhole set by "
                          "'chest_width', 'shoulder_width', 'armhole_depth' and 'shoulder_drop'");
   }
   if (f(lo) > 0) {
-    throw GeneratorError("test_tee: no sleeve cap fits: 'bicep_width' is too large for the armhole set by "
+    throw GeneratorError(id + ": no sleeve cap fits: 'bicep_width' is too large for the armhole set by "
                          "'chest_width', 'shoulder_width', 'armhole_depth' and 'shoulder_drop'");
   }
   for (int i = 0; i < 100 && hi - lo > 1e-10; ++i) {
@@ -110,37 +111,75 @@ double segLen(const PatternPiece& p, const char* name) {
   return p.outline.segmentEnd(i) - p.outline.segmentStart(i);
 }
 
-}  // namespace
+struct PomRow {
+  const char* key;
+  double base, grade;
+};
 
-SpecTable TestTeeGenerator::specTable() const {
+// Base size M; labels are the keys with spaces. Both cuts list the same keys in the same order.
+SpecTable teeTable(std::initializer_list<PomRow> rows) {
   SpecTable t;
   t.baseSize = "M";
-  auto pom = [&](const char* key, double base, double grade) {
-    std::string label = key;
+  for (const auto& r : rows) {
+    std::string label = r.key;
     for (auto& c : label) c = (c == '_') ? ' ' : c;
-    t.poms.push_back({key, label, base, grade});
-  };
-  pom("chest_width", 0.530, 0.025);
-  pom("body_length", 0.720, 0.020);
-  pom("shoulder_width", 0.460, 0.020);
-  pom("sleeve_length", 0.210, 0.010);
-  pom("sleeve_opening", 0.170, 0.008);
-  pom("bicep_width", 0.190, 0.008);
-  pom("neck_width", 0.180, 0.005);
-  pom("front_neck_drop", 0.090, 0.003);
-  pom("back_neck_drop", 0.020, 0.0);
-  pom("armhole_depth", 0.250, 0.010);
-  pom("shoulder_drop", 0.045, 0.0);
-  pom("neck_rib_height", 0.020, 0.0);
+    t.poms.push_back({r.key, label, r.base, r.grade});
+  }
   return t;
 }
 
+Pattern generateTee(const std::map<std::string, double>& spec, const SpecTable& table, const std::string& id);
+
+}  // namespace
+
+SpecTable TestTeeGenerator::specTable() const {
+  return teeTable({{"chest_width", 0.530, 0.025},
+                   {"body_length", 0.720, 0.020},
+                   {"shoulder_width", 0.460, 0.020},
+                   {"sleeve_length", 0.210, 0.010},
+                   {"sleeve_opening", 0.170, 0.008},
+                   {"bicep_width", 0.190, 0.008},
+                   {"neck_width", 0.180, 0.005},
+                   {"front_neck_drop", 0.090, 0.003},
+                   {"back_neck_drop", 0.020, 0.0},
+                   {"armhole_depth", 0.250, 0.010},
+                   {"shoulder_drop", 0.045, 0.0},
+                   {"neck_rib_height", 0.020, 0.0}});
+}
+
 Pattern TestTeeGenerator::generate(const std::map<std::string, double>& spec) const {
-  const TeeSpec s = readSpec(spec, specTable());
+  return generateTee(spec, specTable(), id());
+}
+
+// A women's basic crew-neck tee for Drape's female mannequin (1.70 m, bust 0.932 m, shoulder points at
+// x = +-0.155 m): she is a size M. Grades are per size step. See the Task 7 report for each value's reasoning.
+SpecTable WomensTestTeeGenerator::specTable() const {
+  return teeTable({{"chest_width", 0.485, 0.020},      // M 0.97 m around: 4 cm ease over her bust; 4 cm a size
+                   {"body_length", 0.650, 0.015},      // HPS to hem: the hem ends about 3 cm above her crotch
+                   {"shoulder_width", 0.350, 0.010},   // M shoulder points at x = +-0.175: 2 cm past hers
+                   {"sleeve_length", 0.180, 0.005},    // a women's short sleeve, 3 cm shorter than the men's
+                   {"sleeve_opening", 0.150, 0.006},   // 0.30 m around the sleeve hem
+                   {"bicep_width", 0.165, 0.007},      // 0.33 m around the upper sleeve; her upper arm is 0.25-0.29 m
+                   {"neck_width", 0.160, 0.005},       // 2 cm narrower than the men's crew neck
+                   {"front_neck_drop", 0.085, 0.003},
+                   {"back_neck_drop", 0.020, 0.0},
+                   {"armhole_depth", 0.215, 0.008},    // underarm 21.5 cm below the HPS (men's 25 cm)
+                   {"shoulder_drop", 0.035, 0.0},      // her 20 degree shoulder slope over the shorter shoulder seam
+                   {"neck_rib_height", 0.020, 0.0}});
+}
+
+Pattern WomensTestTeeGenerator::generate(const std::map<std::string, double>& spec) const {
+  return generateTee(spec, specTable(), id());
+}
+
+namespace {
+
+Pattern generateTee(const std::map<std::string, double>& spec, const SpecTable& table, const std::string& id) {
+  const TeeSpec s = readSpec(spec, table, id);
 
   PatternPiece front = bodyPiece("front", s, s.FND, 0.0);
   PatternPiece back = bodyPiece("back", s, s.BND, kPi);
-  const double ch = solveCapHeight(s, segLen(front, "armhole_r"));
+  const double ch = solveCapHeight(s, segLen(front, "armhole_r"), id);
   PatternPiece sleeveL = sleevePiece("sleeve_l", s, ch, BodyRegion::ArmLeft);
   PatternPiece sleeveR = sleevePiece("sleeve_r", s, ch, BodyRegion::ArmRight);
 
@@ -173,10 +212,12 @@ Pattern TestTeeGenerator::generate(const std::map<std::string, double>& spec) co
   seam("rib_close", edge(rib, "right", "right", false), edge(rib, "left", "left", true));
   // Backstop for combinations the checks above do not foresee: never hand out a pattern that fails validation.
   if (const auto issues = validatePattern(p); !issues.empty()) {
-    throw GeneratorError("test_tee: these measurements give an invalid pattern (" + issues.front().rule + ": " +
+    throw GeneratorError(id + ": these measurements give an invalid pattern (" + issues.front().rule + ": " +
                          issues.front().message + ")");
   }
   return p;
 }
+
+}  // namespace
 
 }  // namespace drape::garment

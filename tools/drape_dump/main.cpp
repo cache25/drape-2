@@ -1,14 +1,16 @@
-// drape_dump: drapes the test tee on the test body (the Phase A pipeline) and writes body and garment to OBJ.
+// drape_dump: drapes the test tee on a mannequin (the Phase A pipeline) and writes body and garment to OBJ.
+// The male wears the men's test tee, the female its women's cut.
 #include <algorithm>
 #include <cstdio>
 #include <exception>
 #include <map>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "drape/avatar/collision_bake.hpp"
-#include "drape/avatar/test_body.hpp"
+#include "drape/avatar/mannequin.hpp"
 #include "drape/core/test_fabrics.hpp"
 #include "drape/garment/placement.hpp"
 #include "drape/garment/sim_mesh_builder.hpp"
@@ -22,18 +24,22 @@
 namespace {
 
 constexpr const char* kUsage =
-    "usage: drape_dump --out <file.obj> [--size XS|S|M|L|XL|XXL] [--quality draft|standard|fine]\n";
+    "usage: drape_dump --out <file.obj> [--size XS|S|M|L|XL|XXL] [--quality draft|standard|fine] "
+    "[--body male|female]\n";
 
 struct Args {
   std::string out;
   std::string size = "M";
   drape::SimQuality quality = drape::SimQuality::Draft;
+  drape::avatar::BodyType body = drape::avatar::BodyType::Male;
 };
 
 bool parse(int argc, char** argv, Args& a) {
   const std::map<std::string, drape::SimQuality> qualities{{"draft", drape::SimQuality::Draft},
                                                            {"standard", drape::SimQuality::Standard},
                                                            {"fine", drape::SimQuality::Fine}};
+  const std::map<std::string, drape::avatar::BodyType> bodies{{"male", drape::avatar::BodyType::Male},
+                                                              {"female", drape::avatar::BodyType::Female}};
   for (int i = 1; i < argc; ++i) {
     const std::string key = argv[i];
     if (i + 1 >= argc) return false;
@@ -48,6 +54,10 @@ bool parse(int argc, char** argv, Args& a) {
       const auto it = qualities.find(value);
       if (it == qualities.end()) return false;
       a.quality = it->second;
+    } else if (key == "--body") {
+      const auto it = bodies.find(value);
+      if (it == bodies.end()) return false;
+      a.body = it->second;
     } else {
       return false;
     }
@@ -65,9 +75,12 @@ int main(int argc, char** argv) {
     return 2;
   }
   try {
-    const avatar::TestBody body = avatar::makeTestBody();
-    const CollisionField field = avatar::bakeCollisionField(body.components);
-    garment::TestTeeGenerator generator;
+    const avatar::Mannequin body = avatar::loadMannequin(args.body);
+    const CollisionField field = avatar::bakeCollisionField(std::span<const TriangleMesh>(&body.mesh, 1));
+    const garment::TestTeeGenerator mens;
+    const garment::WomensTestTeeGenerator womens;
+    const garment::GarmentGenerator& generator =
+        args.body == avatar::BodyType::Female ? static_cast<const garment::GarmentGenerator&>(womens) : mens;
     const Pattern pattern = generator.generate(garment::resolveSpec(generator.specTable(), args.size));
     SimMesh mesh = garment::buildSimMesh(pattern, garment::particleDistance(args.quality));
     auto placed = garment::placePattern(pattern, mesh, body.regions);
@@ -87,8 +100,7 @@ int main(int argc, char** argv) {
     std::vector<Vec3f> x(solver.particleCount());
     solver.readPositions(x);
     std::vector<std::pair<std::string, TriangleMesh>> objects;
-    for (std::size_t c = 0; c < body.components.size(); ++c)
-      objects.emplace_back("body_" + std::to_string(c), body.components[c]);
+    objects.emplace_back("body", body.mesh);
     TriangleMesh tee;
     for (const auto& p : x) tee.vertices.push_back(p.cast<double>());
     tee.triangles = mesh.triangles;

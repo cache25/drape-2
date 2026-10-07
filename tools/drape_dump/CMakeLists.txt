@@ -13,5 +13,7 @@ target_link_libraries(drape_obj_writer_tests PRIVATE drape_obj_writer GTest::gte
 gtest_discover_tests(drape_obj_writer_tests DISCOVERY_TIMEOUT 60)
 
 add_test(NAME DrapeDumpSmoke COMMAND drape_dump --out ${CMAKE_BINARY_DIR}/smoke.obj)
+add_test(NAME DrapeDumpFemaleSmoke COMMAND drape_dump --out ${CMAKE_BINARY_DIR}/smoke_female.obj --body female)
+set_tests_properties(DrapeDumpFemaleSmoke PROPERTIES LABELS slow)
 add_test(NAME DrapeDumpBadArguments
          COMMAND ${CMAKE_COMMAND} -DDUMP=$<TARGET_FILE:drape_dump> -P ${CMAKE_CURRENT_SOURCE_DIR}/check_usage.cmake)

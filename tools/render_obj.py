@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Preview renderer for drape_dump output: python3 tools/render_obj.py <in.obj> <out.png>
 
-Draws a 1600x1000 px figure with two panels, a front view from +Z and a side view from +X. Objects named
-body_* are light grey and every other object (the garment) is blue, Lambert-shaded from the light direction
-(0.3, 0.6, 1.0). All faces share one Poly3DCollection so matplotlib depth-sorts body and garment together;
+Draws a 1600x1000 px figure with two panels, a front view from +Z and a side view from +X. Objects whose
+name starts with "body" are off-white and every other object (the garment) is blue, Lambert-shaded from the
+light direction (0.3, 0.6, 1.0). All faces share one Poly3DCollection so matplotlib depth-sorts body and garment together;
 in each orthographic view the body is pushed 1 cm away from the camera, which leaves the image unchanged but
 stops body faces lying a few millimetres under the cloth from sorting in front of it.
 """
@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection  # noqa: E402
 
-BODY_RGB = np.array([0.82, 0.82, 0.82])
+BODY_RGB = np.array([0.93, 0.93, 0.91])
 GARMENT_RGB = np.array([0.20, 0.42, 0.85])
 LIGHT = np.array([0.3, 0.6, 1.0]) / np.linalg.norm([0.3, 0.6, 1.0])
 

@@ -138,3 +138,59 @@ TEST(TestTee, NeverReturnsAnInvalidPattern) {
     }
   }
 }
+
+// ---------------------------------------------------------------------------------------------- women's cut
+
+namespace {
+
+Pattern womensTeeFor(const std::string& size) {
+  WomensTestTeeGenerator g;
+  return g.generate(resolveSpec(g.specTable(), size));
+}
+
+}  // namespace
+
+TEST(WomensTestTee, IdentityIsDistinctFromTheMensTee) {
+  WomensTestTeeGenerator g;
+  EXPECT_EQ(g.id(), "test_tee_womens");
+  EXPECT_NE(g.id(), TestTeeGenerator().id());
+  EXPECT_EQ(g.version(), 1);
+  EXPECT_EQ(g.slot(), OutfitSlot::Top);
+}
+
+TEST(WomensTestTee, SamePomsAsTheMensTeeWithItsOwnValues) {
+  const SpecTable womens = WomensTestTeeGenerator().specTable();
+  const SpecTable mens = TestTeeGenerator().specTable();
+  ASSERT_EQ(womens.poms.size(), mens.poms.size());
+  for (std::size_t i = 0; i < mens.poms.size(); ++i) EXPECT_EQ(womens.poms[i].key, mens.poms[i].key);
+  EXPECT_EQ(womens.baseSize, "M");
+  const auto w = resolveSpec(womens, "M");
+  const auto m = resolveSpec(mens, "M");
+  for (const char* narrower : {"chest_width", "body_length", "shoulder_width", "neck_width", "armhole_depth"})
+    EXPECT_LT(w.at(narrower), m.at(narrower)) << narrower;
+}
+
+TEST(WomensTestTee, ValidForAllSizes) {
+  for (const auto& size : kStandardSizes) {
+    auto issues = validatePattern(womensTeeFor(size));
+    EXPECT_TRUE(issues.empty()) << size << ": " << (issues.empty() ? "" : issues[0].message);
+  }
+}
+
+TEST(WomensTestTee, PomsReproduceSpec) {
+  WomensTestTeeGenerator g;
+  for (const auto& size : kStandardSizes) {
+    auto spec = resolveSpec(g.specTable(), size);
+    Pattern p = g.generate(spec);
+    const auto& front = *p.findPiece("front");
+    const auto& back = *p.findPiece("back");
+    const auto& sleeve = *p.findPiece("sleeve_l");
+    const double tol = 0.001;
+    EXPECT_NEAR(segEnd(front, "side_r").x() - segStart(front, "side_l").x(), spec["chest_width"], tol) << size;
+    EXPECT_NEAR(segEnd(front, "shoulder_r").y() - segStart(front, "hem").y(), spec["body_length"], tol) << size;
+    EXPECT_NEAR((segEnd(back, "armhole_r") - segStart(back, "armhole_l")).norm(), spec["shoulder_width"], tol) << size;
+    EXPECT_NEAR(segEnd(sleeve, "cap_r").y() - segStart(sleeve, "hem").y(), spec["sleeve_length"], tol) << size;
+    EXPECT_NEAR((segEnd(front, "shoulder_r") - segStart(front, "shoulder_l")).norm(), spec["neck_width"], tol) << size;
+    EXPECT_NEAR(segLen(sleeve, "cap_l"), segLen(front, "armhole_r"), 1e-4) << size;
+  }
+}

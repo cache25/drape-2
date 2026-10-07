@@ -27,4 +27,4 @@ TEST(SceneBuilder, MissingSlotThrows) {
   }
 }
 
-TEST(TeeDrape, DraftOnTestBody) { expectTeeDrapes("M", SimQuality::Draft); }
+TEST(TeeDrape, DraftOnMaleMannequin) { expectTeeDrapes("M", SimQuality::Draft, avatar::BodyType::Male); }
