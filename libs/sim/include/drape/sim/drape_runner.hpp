@@ -33,6 +33,7 @@ struct DrapeResult {
   int retries = 0;
   int framesRun = 0;  // every step() call, including frames later rolled back
   double assemblyEndSeamGap = 0;
+  double assemblySeconds = 0;  // simulated time when assembly ended (seams closed or maxAssemblySeconds)
 };
 
 // Runs Assembling -> Settling -> Settled with the stability guard (spec 5.7, 5.8).

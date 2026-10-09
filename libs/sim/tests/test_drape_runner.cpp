@@ -78,6 +78,19 @@ TEST(Runner, AssemblyEndsAtTimeout) {
   EXPECT_EQ(r.framesRun, 180 + 60);
 }
 
+TEST(Runner, ReportsWhenAssemblyEnded) {
+  ScriptedSolver s;
+  s.script = [](int frame, int) { return calm(frame < 30 ? 0.01 : 0.0); };  // the seams close on frame 30
+  const auto r = drapeToRest(s, {"g"});
+  EXPECT_TRUE(r.settled);
+  EXPECT_NEAR(r.assemblySeconds, 30.0 / 60.0, 1e-12);
+  EXPECT_NEAR(r.simulatedSeconds, 90.0 / 60.0, 1e-12);
+
+  ScriptedSolver slow;
+  slow.script = [](int, int) { return calm(0.01); };  // never closes: assembly times out at 3 s
+  EXPECT_NEAR(drapeToRest(slow, {"g"}).assemblySeconds, 3.0, 1e-9);
+}
+
 TEST(Runner, RetriesOnNonFinite) {
   ScriptedSolver s;
   s.script = [](int frame, int restores) {

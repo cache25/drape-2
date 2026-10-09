@@ -102,11 +102,11 @@ inline void expectTeeDrapes(const std::string& size, SimQuality q, avatar::BodyT
   ASSERT_GT(hemCount, 0);
   hem /= hemCount;
   const std::string label = size + " " + std::string(avatar::bodyName(body));
-  std::printf("tee %s q%d: settled=%d failed=%d t=%.2fs retries=%d seamGap=%.2fmm pen=%.2fmm hem=%.3fm "
-              "target=%.3fm hemErr=%+.1fmm particles=%zu\n",
-              label.c_str(), static_cast<int>(q), r.settled, r.failed, r.simulatedSeconds, r.retries,
-              r.assemblyEndSeamGap * 1000, st.maxBodyPenetration * 1000, hem, hemTarget, (hem - hemTarget) * 1000,
-              x.size());
+  std::printf("tee %s q%d: settled=%d failed=%d t=%.2fs assembly=%.2fs retries=%d seamGap=%.2fmm pen=%.2fmm "
+              "hem=%.3fm target=%.3fm hemErr=%+.1fmm particles=%zu\n",
+              label.c_str(), static_cast<int>(q), r.settled, r.failed, r.simulatedSeconds, r.assemblySeconds,
+              r.retries, r.assemblyEndSeamGap * 1000, st.maxBodyPenetration * 1000, hem, hemTarget,
+              (hem - hemTarget) * 1000, x.size());
   EXPECT_TRUE(r.settled) << label;
   EXPECT_FALSE(r.failed) << label << ": " << r.message;
   EXPECT_LT(r.assemblyEndSeamGap, 0.001) << label;

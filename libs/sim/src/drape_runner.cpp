@@ -67,6 +67,7 @@ DrapeResult drapeToRest(Solver& solver, const std::vector<GarmentId>& garments, 
     if (phase == SimPhase::Assembling) {
       if (st.maxSeamGap < o.seamGapDone || phaseTime >= o.maxAssemblySeconds - kTimeEps) {
         result.assemblyEndSeamGap = st.maxSeamGap;
+        result.assemblySeconds = time;
         phase = SimPhase::Settling;
         setAll(phase);
         phaseTime = 0;
