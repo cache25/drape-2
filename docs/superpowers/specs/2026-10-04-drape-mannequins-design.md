@@ -56,7 +56,7 @@ Steps, per body:
    - the lower half tapers to 0.85 of the upper half's horizontal radii, which gives the egg shape and a soft chin.
 
    Each head vertex moves to x + w·(P(x) − x), where P projects radially from the egg centre onto the egg. Then 30 rounds of Laplacian relaxation within the region, each followed by re-projection of w = 1 vertices. Any move that would flip a triangle is rejected. Nose, ears and eye sockets melt away; the neck blends through 0 < w < 1.
-3. **Feet.** The toe region is every vertex with weight w > 0 on the toe bones. 40 rounds of Laplacian smoothing, scaled by w, with the sole plane held: vertices on the sole keep their height. Toes merge into one foot.
+3. **Feet** (as built, after the final review; run on the posed body so the floor is level). Per foot, the forefoot is everything in front of an edge loop a few rings behind the toes. It is laid out afresh on a smoothed convex shell of the toes, cut flat at the forefoot's lowest point, so the gaps between the toes close and the tips round off; then it is relaxed under the flip guard. Toes merge into one rounded foot with a flat sole. (The first version smoothed the toes with 40 Laplacian rounds; that shrank them into spikes instead of merging them.)
 4. **Pose.** Linear blend skinning with the default skeleton and weights:
    - upper arms rotate in the frontal plane until the shoulder→wrist axis is 45° from vertical;
    - upper legs rotate outward until hip→ankle is 5° from vertical;

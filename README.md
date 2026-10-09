@@ -35,7 +35,7 @@ python3 tools/render_obj.py out/tee_M.obj out/tee_M.png
 ## Mannequins
 
 `assets/mannequins/` holds the male (1.80 m) and female (1.70 m) display mannequins: egg head, toned build,
-smooth feet, arms 45° and legs 5° apart. Each body is a triangle OBJ (metres, Y up, facing +Z), a JSON file with
+one-piece rounded feet, arms 45° and legs 5° apart. Each body is a triangle OBJ (metres, Y up, facing +Z), a JSON file with
 height, girths, landmarks and region cylinders, and a test-only `checks.json`. They are built from MakeHuman's
 CC0 assets (pinned commit, see `assets/mannequins/LICENSE.md`) and loaded with `drape::avatar::loadMannequin`.
 
