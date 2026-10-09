@@ -150,6 +150,64 @@ class SectionLoops(unittest.TestCase):
         self.assertEqual(measure.section_loops(vertices, tris, 3.5, everything), 0)
 
 
+class IntersectingPairs(unittest.TestCase):
+    @staticmethod
+    def crossing(offset: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+        """Two separate triangles: one in the z = 0 plane, one in the x = 0.25 plane that pierces it
+        (or misses it when `offset` lifts it above the first one)."""
+        vertices = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0],
+                             [0.25, 0.25, -0.5 + offset], [0.25, 0.25, 0.5 + offset], [0.25, -0.5, 0.0 + offset]])
+        return vertices, np.array([[0, 1, 2], [3, 4, 5]], dtype=np.int64)
+
+    def test_a_triangle_through_another_is_one_pair(self):
+        vertices, tris = self.crossing()
+        np.testing.assert_array_equal(measure.intersecting_pairs(vertices, tris), [[0, 1]])
+
+    def test_separate_triangles_are_no_pair(self):
+        vertices, tris = self.crossing(offset=0.6)
+        self.assertEqual(measure.intersecting_pairs(vertices, tris).shape, (0, 2))
+
+    def test_pairs_that_share_a_vertex_are_skipped(self):
+        # a fan of two triangles folded through each other around their shared vertex
+        vertices = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.3, 0.3, -0.5], [0.3, 0.3, 0.5]])
+        tris = np.array([[0, 1, 2], [0, 3, 4]], dtype=np.int64)
+        self.assertEqual(measure.intersecting_pairs(vertices, tris).shape, (0, 2))
+
+    def test_a_closed_box_does_not_intersect_itself(self):
+        vertices, tris = box_mesh(1.0, 2.0, 3.0)
+        self.assertEqual(len(measure.intersecting_pairs(vertices, tris)), 0)
+
+    def test_the_mask_limits_the_pairs_to_triangles_it_touches(self):
+        # two boxes pushed into each other: their side faces cross; masking one box away hides all of it
+        a, ta = box_mesh(1.0, 1.0, 1.0)
+        b, tb = box_mesh(1.0, 1.0, 1.0)
+        b += [0.5, 0.25, 0.25]
+        vertices, tris = np.vstack([a, b]), np.vstack([ta, tb + 8])
+        pairs = measure.intersecting_pairs(vertices, tris)
+        self.assertGreater(len(pairs), 0)
+        self.assertTrue(np.all(pairs[:, 0] < pairs[:, 1]))
+        self.assertTrue(np.all((pairs[:, 0] < 12) & (pairs[:, 1] >= 12)))       # always one triangle of each box
+        first_box = np.zeros(24, dtype=bool)
+        first_box[:12] = True
+        np.testing.assert_array_equal(measure.intersecting_pairs(vertices, tris, first_box), pairs)
+        self.assertEqual(len(measure.intersecting_pairs(vertices, tris, first_box & False)), 0)
+
+    def test_a_grid_of_many_small_triangles_finds_exactly_the_crossings(self):
+        # a flat 40 x 40 sheet and one long thin triangle stabbing through it at three cells' corners
+        heights = np.zeros((41, 41))
+        vertices, tris = sheet_mesh(heights, cell=0.01)
+        n = len(vertices)
+        stab = np.array([[0.105, -0.05, 0.103], [0.105, 0.05, 0.103], [0.3, 0.0, 0.3]])
+        vertices = np.vstack([vertices, stab])
+        tris = np.vstack([tris, [[n, n + 1, n + 2]]])
+        pairs = measure.intersecting_pairs(vertices, tris)
+        self.assertGreater(len(pairs), 0)
+        self.assertTrue(np.all(pairs[:, 1] == len(tris) - 1))
+        brute = [t for t in range(len(tris) - 1)
+                 if measure._triangles_cross(vertices[tris[t]][None], vertices[tris[-1]][None])[0]]
+        np.testing.assert_array_equal(pairs[:, 0], brute)
+
+
 class DominantBones(unittest.TestCase):
     PARENT = {"root": None, "a": "root", "b": "root", "c": "a"}
 

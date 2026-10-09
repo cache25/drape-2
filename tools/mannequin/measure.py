@@ -109,6 +109,78 @@ def section_loops(vertices: np.ndarray, tris: np.ndarray, y: float, vertex_mask:
     return len({find(edge) for edge in list(parent)})
 
 
+# --------------------------------------------------------------------------- self-intersection
+
+def _segments_cross(p0: np.ndarray, p1: np.ndarray, a: np.ndarray, b: np.ndarray, c: np.ndarray) -> np.ndarray:
+    """(K,) bool: the open segment p0-p1 passes through triangle abc (Moller-Trumbore; a segment in
+    the triangle's plane does not count)."""
+    e1, e2, d = b - a, c - a, p1 - p0
+    h = np.cross(d, e2)
+    det = (e1 * h).sum(axis=-1)
+    ok = np.abs(det) > 1e-30
+    inv = np.divide(1.0, det, out=np.zeros_like(det), where=ok)
+    s = p0 - a
+    u = inv * (s * h).sum(axis=-1)
+    q = np.cross(s, e1)
+    v = inv * (d * q).sum(axis=-1)
+    t = inv * (e2 * q).sum(axis=-1)
+    return ok & (u >= 0.0) & (u <= 1.0) & (v >= 0.0) & (u + v <= 1.0) & (t > 0.0) & (t < 1.0)
+
+
+def _triangles_cross(first: np.ndarray, second: np.ndarray) -> np.ndarray:
+    """(K,) bool for (K, 3, 3) corner arrays: an edge of one triangle passes through the other."""
+    hit = np.zeros(len(first), dtype=bool)
+    for i in range(3):
+        j = (i + 1) % 3
+        hit |= _segments_cross(first[:, i], first[:, j], second[:, 0], second[:, 1], second[:, 2])
+        hit |= _segments_cross(second[:, i], second[:, j], first[:, 0], first[:, 1], first[:, 2])
+    return hit
+
+
+def intersecting_pairs(vertices: np.ndarray, tris: np.ndarray, vertex_mask: np.ndarray | None = None) -> np.ndarray:
+    """(P, 2) ascending triangle-index pairs (i < j, sorted) whose triangles pass through each other.
+
+    Pairs that share a vertex are skipped (neighbours touch by construction; a fold between them is a
+    facing problem, not a crossing), and so are coplanar overlaps. With `vertex_mask`, only pairs with
+    at least one triangle that has a vertex in the mask are reported, but they are tested against every
+    triangle. Candidates come from a uniform grid hash with cells twice the median triangle size, so a
+    whole body takes a second or two."""
+    v = np.asarray(vertices, dtype=np.float64)
+    tris = np.asarray(tris, dtype=np.int64).reshape(-1, 3)
+    if len(tris) < 2:
+        return np.zeros((0, 2), dtype=np.int64)
+    corners = v[tris]
+    lo, hi = corners.min(axis=1), corners.max(axis=1)
+    cell = 2.0 * float(np.median((hi - lo).max(axis=1))) or 1.0
+    i0 = np.floor(lo / cell).astype(np.int64)
+    span = np.floor(hi / cell).astype(np.int64) - i0 + 1                 # cells per axis per triangle
+    count = span.prod(axis=1)
+    owner = np.repeat(np.arange(len(tris)), count)
+    k = np.arange(count.sum()) - np.repeat(np.cumsum(count) - count, count)
+    sx, sy = span[owner, 0], span[owner, 1]
+    cells = i0[owner] + np.stack([k % sx, (k // sx) % sy, k // (sx * sy)], axis=1)
+    cells -= cells.min(axis=0)
+    size = cells.max(axis=0) + 1
+    key = (cells[:, 0] * size[1] + cells[:, 1]) * size[2] + cells[:, 2]
+    order = np.lexsort((owner, key))
+    key, owner = key[order], owner[order]
+    starts = np.flatnonzero(np.r_[True, key[1:] != key[:-1]])
+    ends = np.r_[starts[1:], len(key)]
+    later = np.repeat(ends, ends - starts) - np.arange(len(key)) - 1     # entries after this one in its cell
+    first = np.repeat(np.arange(len(key)), later)
+    second = first + 1 + np.arange(later.sum()) - np.repeat(np.cumsum(later) - later, later)
+    a, b = owner[first], owner[second]
+    pairs = np.unique(np.stack([np.minimum(a, b), np.maximum(a, b)], axis=1), axis=0)
+    pairs = pairs[pairs[:, 0] != pairs[:, 1]]
+    if vertex_mask is not None:
+        touched = np.asarray(vertex_mask, dtype=bool)[tris].any(axis=1)
+        pairs = pairs[touched[pairs[:, 0]] | touched[pairs[:, 1]]]
+    shared = (tris[pairs[:, 0]][:, :, None] == tris[pairs[:, 1]][:, None, :]).any(axis=(1, 2))
+    overlap = ((lo[pairs[:, 0]] <= hi[pairs[:, 1]]) & (lo[pairs[:, 1]] <= hi[pairs[:, 0]])).all(axis=1)
+    pairs = pairs[~shared & overlap]
+    return pairs[_triangles_cross(corners[pairs[:, 0]], corners[pairs[:, 1]])]
+
+
 # --------------------------------------------------------------------------- body parts
 
 def dominant_bones(rig: Rig, n: int) -> list[str]:

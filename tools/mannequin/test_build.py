@@ -30,8 +30,11 @@ def with_triangle(vertices: np.ndarray, tris: np.ndarray, corners: np.ndarray) -
 
 
 class CheckMesh(unittest.TestCase):
-    def check(self, vertices, tris, head=()):
-        build_mannequins.check_mesh("test", vertices, tris, np.array(head, dtype=np.int64), EGG)
+    def check(self, vertices, tris, head=(), forefoot=None):
+        if forefoot is None:
+            forefoot = np.flatnonzero(vertices[:, 1] < 0.1)             # the feet, not the test's head triangles
+        build_mannequins.check_mesh("test", vertices, tris, np.array(head, dtype=np.int64), EGG,
+                                    np.asarray(forefoot, dtype=np.int64))
 
     def test_a_good_mesh_passes(self):
         vertices, tris = two_feet()
@@ -64,11 +67,48 @@ class CheckMesh(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "2 loops under the left foot"):
             self.check(vertices, tris)
 
+    def test_triangles_that_pass_through_each_other_fail(self):
+        # a separate triangle stabbing through the left box's top face
+        vertices, tris = with_triangle(*two_feet(), np.array([[0.15, 0.03, 0.1], [0.15, 0.08, 0.1], [0.16, 0.08, 0.12]]))
+        with self.assertRaisesRegex(RuntimeError, "1 triangle pairs pass through each other"):
+            self.check(vertices, tris)
+
+    def test_a_low_separate_toe_fails_at_every_height_it_reaches(self):
+        # a toe box from 4 to 8 mm in front of the left foot: the 1 cm section misses it, the
+        # forefoot sections at 5 and 7 mm cut it in its own loop
+        vertices, tris = two_feet()
+        toe, toe_tris = box(0.12, size=(0.02, 0.004, 0.02))
+        toe += [0.0, 0.004, 0.26]
+        vertices, tris = np.vstack([vertices, toe]), np.vstack([tris, toe_tris + 16])
+        with self.assertRaisesRegex(RuntimeError, "forefoot section at y = 0.005 m has 2 pieces on the left"):
+            self.check(vertices, tris)
+        # outside the forefoot it is only an extra loop under 1 cm, which the 1 cm check cannot see
+        self.check(vertices, tris, forefoot=np.arange(16))
+
+    def test_forefoot_sections_go_up_to_the_top_of_the_forefoot_in_2_mm_steps(self):
+        heights = build_mannequins.forefoot_heights(np.array([[0.0, 0.0, 0.0], [0.0, 0.0125, 0.0]]))
+        np.testing.assert_allclose(heights, [0.005, 0.007, 0.009, 0.011])
+
     def test_a_foot_that_does_not_reach_1_cm_fails(self):
         left, tl = box(0.1, size=(0.1, 0.005, 0.25))           # a 5 mm slab: the 1 cm plane misses it
         right, tr = box(-0.2)
         with self.assertRaisesRegex(RuntimeError, "0 loops under the left foot"):
             self.check(np.vstack([left, right]), np.vstack([tl, tr + 8]))
+
+
+class LicenseText(unittest.TestCase):
+    def test_states_the_source_terms_and_provenance(self):
+        text = build_mannequins.LICENSE_TEXT
+        self.assertIn("CC0 1.0 Universal", text)                  # the MakeHuman source assets' licence
+        self.assertIn(build_mannequins.makehuman.PINNED_COMMIT, text)
+        self.assertIn(f"Builder version: {build_mannequins.BUILDER_VERSION}", text)
+        self.assertIn(build_mannequins.VERTEX_ORDER, text)
+
+    def test_does_not_release_the_derived_assets(self):
+        # Drape's mannequins are not dedicated to the public domain; whether to release them is Ian's call.
+        text = build_mannequins.LICENSE_TEXT.lower()
+        self.assertNotIn("released", text)
+        self.assertNotIn("same terms", text)
 
 
 if __name__ == "__main__":

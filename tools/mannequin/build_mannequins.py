@@ -4,7 +4,7 @@
     python3 tools/mannequin/build_mannequins.py [--cache out/makehuman-cache] [--out assets/mannequins]
 
 Per body: bisect MakeHuman's height macro until the posed body is the target height, build it
-(macro targets, egg head, smooth feet, 45 degree arms and 5 degree legs, Drape's frame), measure
+(macro targets, egg head, 45 degree arms and 5 degree legs, rounded forefeet, Drape's frame), measure
 it (`measure.py`), and write `<body>.obj`, `<body>.json` and `<body>.checks.json`; then
 `LICENSE.md`. The source files come from the pinned MakeHuman commit, checked against
 `tools/mannequin/manifest.sha256`, and are downloaded into `--cache` only when missing. The
@@ -47,7 +47,8 @@ HEIGHT_TOLERANCE = 0.0005         # metres
 MAX_BISECTIONS = 40
 MIN_TRIANGLE_AREA = 1e-9           # m^2, on the rounded mesh: spec section 9 says 1e-10, with 10x for rounding
 FOOT_SECTION_Y = 0.01              # metres: the horizontal section there is one loop per foot (spec section 9)
-HEAD_PIN_WEIGHT = 0.999           # head vertices at least this weighted sit on the egg
+FOREFOOT_SECTION_LOW = 0.005       # metres: the forefoot is one piece in every section from here ...
+FOREFOOT_SECTION_STEP = 0.002      # ... up to the top of the forefoot, in steps of this
 
 BODIES = {"male": (1.0, 1.80), "female": (0.0, 1.70)}    # name -> (gender slider, target height in metres)
 
@@ -87,12 +88,15 @@ class Built:
     offset: np.ndarray                # (3,) subtracted from MakeHuman's frame to get Drape's
     joints: dict[str, np.ndarray]     # posed limb joints plus the unposed breast, neck01 and eye.L, in Drape's frame
     egg: style.Egg                    # in Drape's frame
-    head_vertices: np.ndarray         # ascending indices of the egg-surface vertices (cavities excluded)
+    head_vertices: np.ndarray         # ascending indices of the vertices on the egg (head weight >= 0.999)
+    forefoot: np.ndarray              # ascending indices of the vertices `style.round_forefeet` reshaped (empty without feet)
     height: float                     # floor to top of the head
 
 
-def build_body(src: Source, gender: float, height_macro: float) -> Built:
-    """One evaluation: weighted targets, egg head, smooth feet, pose, Drape's frame."""
+def build_body(src: Source, gender: float, height_macro: float, feet: bool = True) -> Built:
+    """One evaluation: weighted targets, egg head, pose, rounded forefeet, Drape's frame. The forefeet
+    are rounded on the posed body (its floor is level), and only when `feet`: they cannot change the
+    height (the sole stays at the forefoot's lowest point), so the height bisection leaves them out."""
     n = len(src.base.body_ids)
     quads = src.base.body_quads
     values = makehuman.macro_values(gender, AGE, MUSCLE, WEIGHT, height_macro, PROPORTIONS)
@@ -102,12 +106,12 @@ def build_body(src: Source, gender: float, height_macro: float) -> Built:
     # The egg is fitted to the unposed skull, in MakeHuman's frame.
     eye_y = makehuman.joint_pos(vertices, src.rig, "eye.L____head")[1]
     egg = style.fit_egg(vertices, src.head_weights, eye_y)
-    cavity = style.cavity_vertices(vertices, quads, src.head_weights, egg)    # before the egg moves them
-    head_vertices = np.flatnonzero((src.head_weights[:n] >= HEAD_PIN_WEIGHT) & ~cavity[:n])
-
     vertices = style.make_egg_head(vertices, quads, src.head_weights, egg)
-    vertices = style.smooth_toes(vertices, quads, src.toe_weights)
     posed = pose.pose(vertices, src.rig, ARM_DEG, LEG_DEG)
+    forefoot = np.zeros(0, dtype=np.int64)
+    if feet:
+        rounded, forefoot = style.round_forefeet(posed.vertices, quads, src.toe_weights)
+        posed = pose.Posed(vertices=rounded, joints=posed.joints)
     framed, offset = pose.to_drape_frame(posed.vertices, src.base.body_ids, posed.joints["foot.L____head"],
                                          posed.joints["foot.R____head"])
 
@@ -116,7 +120,8 @@ def build_body(src: Source, gender: float, height_macro: float) -> Built:
         joints[name] = makehuman.joint_pos(posed.vertices, src.rig, name) - offset
     return Built(vertices=framed, offset=offset, joints=joints,
                  egg=style.Egg(centre=egg.centre - offset, radii=egg.radii, taper=egg.taper),
-                 head_vertices=head_vertices, height=float(framed[:n, 1].max()))
+                 head_vertices=style.head_vertices(src.head_weights[:n]), forefoot=forefoot[forefoot < n],
+                 height=float(framed[:n, 1].max()))
 
 
 def bisect_height(evaluate: Callable[[float], float], target: float, log: Callable[[str], None]) -> float:
@@ -196,7 +201,7 @@ from MakeHuman's base mesh, shape targets and default rig.
 - Source: <https://github.com/makehumancommunity/makehuman>, commit `{makehuman.PINNED_COMMIT}`
 - License of the source assets: Creative Commons CC0 1.0 Universal (public domain dedication),
   see `LICENSE.ASSETS.md` at that commit. Commercial use is allowed and no attribution is
-  required. This folder is released on the same terms.
+  required.
 - Builder version: {BUILDER_VERSION}
 - Vertex order: {VERTEX_ORDER}. Each `.obj` holds the 13,380 vertices of
   MakeHuman's `body` group and no others, so shape targets defined on MakeHuman's mesh map
@@ -233,11 +238,26 @@ def write_body(out_dir: Path, name: str, body: np.ndarray, tris: np.ndarray, m: 
 
 # --------------------------------------------------------------------------- driver
 
-def check_mesh(name: str, body: np.ndarray, tris: np.ndarray, head_vertices: np.ndarray, egg: style.Egg) -> None:
+def forefoot_heights(points: np.ndarray) -> np.ndarray:
+    """The heights of the forefoot sections: FOREFOOT_SECTION_LOW and every FOREFOOT_SECTION_STEP above it
+    up to the highest of `points` (rounded to the micron so the list is the same on every machine)."""
+    top = float(np.asarray(points)[:, 1].max())
+    count = int(np.floor((top - FOREFOOT_SECTION_LOW) / FOREFOOT_SECTION_STEP + 1e-9)) + 1
+    return np.round(FOREFOOT_SECTION_LOW + FOREFOOT_SECTION_STEP * np.arange(max(count, 0)), 6)
+
+
+def check_mesh(name: str, body: np.ndarray, tris: np.ndarray, head_vertices: np.ndarray, egg: style.Egg,
+               forefoot: np.ndarray) -> None:
     """Raise if the rounded mesh about to be written breaks a check of the spec's section 9 that
-    the loader's tests make on the committed file: no triangle under MIN_TRIANGLE_AREA, no
-    triangle with all three vertices on the egg surface facing into the head, and exactly one
-    loop per foot in the horizontal section at FOOT_SECTION_Y."""
+    the loader's tests make on the committed file, or a styling check of the final review:
+
+    * no triangle under MIN_TRIANGLE_AREA;
+    * no triangle with all three vertices on the egg surface facing into the head;
+    * no two triangles passing through each other (`measure.intersecting_pairs`, whole body);
+    * exactly one loop per foot in the horizontal section at FOOT_SECTION_Y;
+    * the forefoot (`forefoot`: the vertices `style.round_forefeet` reshaped) cut in exactly one
+      piece per foot by every horizontal plane from FOREFOOT_SECTION_LOW to its top, every
+      FOREFOOT_SECTION_STEP: no separate toes at any height."""
     a, b, c = body[tris[:, 0]], body[tris[:, 1]], body[tris[:, 2]]
     normal = np.cross(b - a, c - a)
     area = 0.5 * np.linalg.norm(normal, axis=1)
@@ -250,11 +270,27 @@ def check_mesh(name: str, body: np.ndarray, tris: np.ndarray, head_vertices: np.
     facing = (normal[head] * ((a + b + c)[head] / 3.0 - egg.centre)).sum(axis=1)
     if (facing <= 0.0).any():
         raise RuntimeError(f"{name}: {int((facing <= 0.0).sum())} head triangles face into the egg")
+    crossing = measure.intersecting_pairs(body, tris)
+    if len(crossing):
+        where = body[tris[crossing[0, 0]]].mean(axis=0)
+        raise RuntimeError(f"{name}: {len(crossing)} triangle pairs pass through each other (the first near "
+                           f"({where[0]:.3f}, {where[1]:.3f}, {where[2]:.3f}) m)")
+    in_forefoot = np.zeros(len(body), dtype=bool)
+    in_forefoot[forefoot] = True
     for side, sign in (("left", 1.0), ("right", -1.0)):
-        loops = measure.section_loops(body, tris, FOOT_SECTION_Y, sign * body[:, 0] > 0.0)
+        this_side = sign * body[:, 0] > 0.0
+        loops = measure.section_loops(body, tris, FOOT_SECTION_Y, this_side)
         if loops != 1:
             raise RuntimeError(f"{name}: the section at y = {FOOT_SECTION_Y} m has {loops} loops under the "
                                f"{side} foot, not 1")
+        part = in_forefoot & this_side
+        if not part.any():
+            continue
+        for y in forefoot_heights(body[part]):
+            pieces = measure.section_loops(body, tris, float(y), part)
+            if pieces != 1:
+                raise RuntimeError(f"{name}: the forefoot section at y = {y:.3f} m has {pieces} pieces on the "
+                                   f"{side}, not 1")
 
 
 def build_and_write(src: Source, name: str, out_dir: Path, log: Callable[[str], None]) -> str:
@@ -264,17 +300,20 @@ def build_and_write(src: Source, name: str, out_dir: Path, log: Callable[[str], 
 
     def evaluate(macro: float) -> float:
         if macro not in evaluations:
-            evaluations[macro] = build_body(src, gender, macro)
+            evaluations[macro] = build_body(src, gender, macro, feet=False)
         return evaluations[macro].height
 
     log(f"{name}: bisecting the height macro")
     macro = bisect_height(evaluate, target, log)
-    built = evaluations[macro]
+    built = build_body(src, gender, macro)
+    if abs(built.height - evaluations[macro].height) > 1e-12:
+        raise RuntimeError(f"{name}: rounding the forefeet changed the height "
+                           f"({evaluations[macro].height:.6f} -> {built.height:.6f} m)")
 
     # Round first: everything below is measured from the numbers that get written.
     body = np.round(built.vertices[:n], 6) + 0.0
     tris = pose.triangulate(body, src.base.body_quads)
-    check_mesh(name, body, tris, built.head_vertices, built.egg)
+    check_mesh(name, body, tris, built.head_vertices, built.egg, built.forefoot)
     dominant = measure.dominant_bones(src.rig, n)
     m = measure.measure_body(body, tris, dominant, src.rig, built.joints, built.egg, built.head_vertices)
     write_body(out_dir, name, body, tris, m, built)

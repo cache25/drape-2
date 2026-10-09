@@ -6,7 +6,7 @@ from MakeHuman's base mesh, shape targets and default rig.
 - Source: <https://github.com/makehumancommunity/makehuman>, commit `a8bc2d54ff0ac92e78ff71431b1023eda42bf482`
 - License of the source assets: Creative Commons CC0 1.0 Universal (public domain dedication),
   see `LICENSE.ASSETS.md` at that commit. Commercial use is allowed and no attribution is
-  required. This folder is released on the same terms.
+  required.
 - Builder version: 1
 - Vertex order: makehuman base.obj body group, ascending index. Each `.obj` holds the 13,380 vertices of
   MakeHuman's `body` group and no others, so shape targets defined on MakeHuman's mesh map

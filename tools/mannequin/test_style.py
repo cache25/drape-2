@@ -6,6 +6,7 @@ import numpy as np
 
 import makehuman
 import measure
+import pose
 import style
 
 EGG = style.Egg(np.array([0.0, 1.62, 0.02]), np.array([0.075, 0.115, 0.095]))
@@ -120,30 +121,38 @@ class EggShape(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(p)))
         self.assertAlmostEqual(float(style.egg_value(EGG, p)), 1.0, places=9)
 
+    @staticmethod
+    def half_width(axis: int, q_y: float) -> float:
+        """Surface half-extent of EGG along x (axis 0) or z (axis 2) at height centre_y + q_y."""
+        lo, hi = 0.0, 1.0
+        for _ in range(100):
+            mid = (lo + hi) / 2
+            offset = np.zeros(3)
+            offset[axis], offset[1] = mid, q_y
+            lo, hi = (mid, hi) if style.egg_value(EGG, EGG.centre + offset) < 1 else (lo, mid)
+        return lo
+
     def test_taper_halfway_down(self):
         ax, ay, az = EGG.radii
         qy = -ay / 2
-        k = 1 - 0.15 * 0.5
-
-        def half_width(axis: int, q_y: float) -> float:
-            """Surface half-extent along x (axis 0) or z (axis 2) at height centre_y + q_y."""
-            lo, hi = 0.0, 1.0
-            for _ in range(100):
-                mid = (lo + hi) / 2
-                offset = np.zeros(3)
-                offset[axis], offset[1] = mid, q_y
-                lo, hi = (mid, hi) if style.egg_value(EGG, EGG.centre + offset) < 1 else (lo, mid)
-            return lo
-
+        k = 1 - 0.15 * 0.5 ** 2            # k = 1 - (1 - taper) (-q_y / a_y)^2
         # The horizontal ellipse at height q_y has radii (ax, az) * k * sqrt(1 - (q_y/ay)^2);
         # the factor k * (ax, az) is the "horizontal radius" the taper scales.
         s = np.sqrt(1 - (qy / ay) ** 2)
-        self.assertAlmostEqual(half_width(0, qy) / s, ax * k, places=9)
-        self.assertAlmostEqual(half_width(2, qy) / s, az * k, places=9)
+        self.assertAlmostEqual(self.half_width(0, qy) / s, ax * k, places=9)
+        self.assertAlmostEqual(self.half_width(2, qy) / s, az * k, places=9)
         # at the same elliptical fraction above the centre the radius is the full ax
-        self.assertAlmostEqual(half_width(0, -qy) / s, ax, places=9)
-        # and the body is the same egg at the very bottom: taper only, no extra shrink
+        self.assertAlmostEqual(self.half_width(0, -qy) / s, ax, places=9)
+        # and at the bottom pole the taper is the full 0.85: no extra shrink
         self.assertAlmostEqual(float(style.egg_value(EGG, EGG.centre + [ax * 0.85, -ay, 0.0])), 2.0, places=9)
+
+    def test_the_taper_has_no_kink_at_the_centre(self):
+        # The side of the egg is smooth through the equator: the half-width a little below the centre
+        # matches the one the same distance above to second order (a linear taper is off to first order).
+        ax, ay, _ = EGG.radii
+        for delta in (1e-3, 1e-4):
+            above, below = self.half_width(0, delta * ay), self.half_width(0, -delta * ay)
+            self.assertLess(abs(above - below), 0.2 * ax * delta * delta)
 
     def test_egg_value_is_one_on_the_axis_poles(self):
         ax, ay, az = EGG.radii
@@ -208,6 +217,24 @@ class FitEgg(unittest.TestCase):
             style.fit_egg(vertices, np.zeros(len(vertices)), eye_y=1.6)
 
 
+def mirror_of(vertices: np.ndarray) -> np.ndarray:
+    """Index of each vertex's mirror image (x -> -x), matched to 1e-9 m; -1 where there is none."""
+    key = {tuple(np.round(p, 9) + 0.0): i for i, p in enumerate(vertices)}
+    return np.array([key.get(tuple(np.round([-p[0], p[1], p[2]], 9) + 0.0), -1) for p in vertices])
+
+
+def crossings(vertices: np.ndarray, quads: np.ndarray) -> int:
+    """Triangle pairs of the quads' (shorter-diagonal) triangulation that pass through each other."""
+    return len(measure.intersecting_pairs(vertices, pose.triangulate(vertices, quads)))
+
+
+def neck_weights(vertices: np.ndarray) -> np.ndarray:
+    """A head region like the real one: everything above 6 cm under the egg centre is head (w = 1),
+    blending to 0 over the 2 cm below it, so the region has a single boundary loop round the neck."""
+    t = np.clip((vertices[:, 1] - (EGG.centre[1] - 0.08)) / 0.02, 0.0, 1.0)
+    return t
+
+
 class EggHead(unittest.TestCase):
     def test_egg_head_removes_bumps(self):
         vertices, quads = nosed_sphere()
@@ -228,15 +255,13 @@ class EggHead(unittest.TestCase):
 
     def test_egg_head_relaxes_the_mesh_not_just_the_projection(self):
         vertices, quads = nosed_sphere()
-        w = np.ones(len(vertices))
         projected = style.project_to_egg(EGG, vertices)
-        out = style.make_egg_head(vertices, quads, w, EGG)
+        out = style.make_egg_head(vertices, quads, np.ones(len(vertices)), EGG)
         self.assertGreater(np.linalg.norm(out - projected, axis=1).max(), 1e-3)
 
     def test_zero_weight_vertices_never_move(self):
         vertices, quads = nosed_sphere()
-        w = np.where(vertices[:, 1] > EGG.centre[1], 1.0, 0.0)
-        w[(vertices[:, 1] <= EGG.centre[1]) & (vertices[:, 1] > EGG.centre[1] - 0.03)] = 0.5
+        w = neck_weights(vertices)
         out = style.make_egg_head(vertices, quads, w, EGG)
         still = w == 0
         self.assertGreater(still.sum(), 0)
@@ -248,126 +273,18 @@ class EggHead(unittest.TestCase):
     def test_input_is_not_modified_and_output_is_deterministic(self):
         vertices, quads = nosed_sphere()
         before = vertices.copy()
-        w = np.linspace(0.0, 1.0, len(vertices))
+        w = neck_weights(vertices)
         first = style.make_egg_head(vertices, quads, w, EGG)
         second = style.make_egg_head(vertices, quads, w, EGG)
         np.testing.assert_array_equal(vertices, before)
         self.assertEqual(first.tobytes(), second.tobytes())
 
-    @staticmethod
-    def rough_sphere(jitter: float, seed: int) -> tuple[np.ndarray, np.ndarray]:
-        """Noise on the sphere radially and sideways: projecting it onto the egg folds many quads
-        and relaxing it wants to turn many more over."""
-        rng = np.random.default_rng(seed)
-        points, quads = cube_sphere(8)
-        vertices = EGG.centre + 0.1 * points * (1 + jitter * rng.uniform(-1, 1, (len(points), 1)))
-        vertices += rng.normal(0.0, 0.03 * jitter, vertices.shape)
-        return vertices, quads
-
-    @staticmethod
-    def after_the_blend(vertices: np.ndarray, quads: np.ndarray, w: np.ndarray) -> np.ndarray:
-        """make_egg_head with no relaxation rounds and no untangling: just the blend onto the egg."""
-        with mock.patch.object(style, "_HEAD_ROUNDS", 0), mock.patch.object(style, "_untangle", lambda v, *a: v):
-            return style.make_egg_head(vertices, quads, w, EGG)
-
-    @staticmethod
-    def relaxed_only(vertices: np.ndarray, quads: np.ndarray, w: np.ndarray) -> np.ndarray:
-        """make_egg_head without the final untangling: the blend, the relaxation and its guard.
-        (The rough spheres below are noisier than any head; `_untangle` would raise on them.)"""
-        with mock.patch.object(style, "_untangle", lambda v, *a: v):
-            return style.make_egg_head(vertices, quads, w, EGG)
-
-    def test_quads_that_face_outward_never_turn_inward(self):
-        vertices, quads = self.rough_sphere(jitter=0.6, seed=0)
-        w = np.clip((vertices[:, 1] - EGG.centre[1] + 0.05) / 0.1, 0.0, 1.0)     # a soft lower edge, w = 0 below
-        faced_out = outward(self.after_the_blend(vertices, quads, w), quads, EGG.centre) > 0
-
-        def turned_in(result: np.ndarray) -> int:
-            return int((faced_out & (outward(result, quads, EGG.centre) <= 0)).sum())
-
-        self.assertEqual(turned_in(self.relaxed_only(vertices, quads, w)), 0)
-        with mock.patch.object(style, "_revert_flips", lambda before, after, quads, centre: after):
-            self.assertGreater(turned_in(self.relaxed_only(vertices, quads, w)), 5)   # the guard is what does it
-
-    def test_quads_folded_by_the_blend_can_unfold(self):
-        vertices, quads = self.rough_sphere(jitter=0.3, seed=1)
-        w = np.ones(len(vertices))
-        folded = outward(self.after_the_blend(vertices, quads, w), quads, EGG.centre) <= 0
-        self.assertGreater(folded.sum(), 20)
-        out = self.relaxed_only(vertices, quads, w)
-        still = folded & (outward(out, quads, EGG.centre) <= 0)
-        self.assertLess(still.sum() * 4, folded.sum())
-
-    @staticmethod
-    def twisted_sphere(radius_edges: float, angle: float) -> tuple[np.ndarray, np.ndarray, int, float]:
-        """The sphere on the egg with the vertices within `radius_edges` edge lengths of one vertex
-        turned by `angle` about it, in its tangent plane, then put back on the egg: the quads around
-        the patch are folded, which is what the projection does to the rim of a nostril. Returns
-        the vertices, the quads, the patch's centre vertex and the edge length."""
-        points, quads = cube_sphere(16)
-        vertices = style.project_to_egg(EGG, EGG.centre + 0.1 * points)
-        outward_dir = (vertices - EGG.centre) / np.linalg.norm(vertices - EGG.centre, axis=1, keepdims=True)
-        aim = np.array([0.3, 0.2, 1.0]) / np.linalg.norm([0.3, 0.2, 1.0])
-        centre = int(np.argmax(outward_dir @ aim))
-        adjacent = sorted({int(q[(list(q).index(centre) + s) % 4]) for q in quads[(quads == centre).any(axis=1)]
-                           for s in (1, 3)})
-        edge = float(np.linalg.norm(vertices[adjacent[0]] - vertices[centre]))
-        t1 = np.cross(outward_dir[centre], [0.0, 1.0, 0.0])
-        t1 /= np.linalg.norm(t1)
-        t2 = np.cross(outward_dir[centre], t1)
-        near = np.linalg.norm(vertices - vertices[centre], axis=1) <= radius_edges * edge
-        d = vertices[near] - vertices[centre]
-        x, y = d @ t1, d @ t2
-        along_normal = d - np.outer(x, t1) - np.outer(y, t2)
-        turned = (np.outer(np.cos(angle) * x - np.sin(angle) * y, t1)
-                  + np.outer(np.sin(angle) * x + np.cos(angle) * y, t2) + along_normal)
-        twisted = vertices.copy()
-        twisted[near] = vertices[centre] + turned
-        return style.project_to_egg(EGG, twisted), quads, centre, edge
-
-    @staticmethod
-    def spoiled_corners(vertices: np.ndarray, quads: np.ndarray) -> int:
-        """Quads with a corner triangle that faces the egg's centre or is under the area floor."""
-        facing, area = style._corners(vertices, quads, EGG.centre)
-        return int(((facing <= 0.0) | (area < style._AREA_FLOOR)).any(axis=1).sum())
-
-    TWISTS = ((1.6, np.pi), (2.4, 2.0 * np.pi / 3.0))        # (patch radius in edge lengths, angle)
-
-    def test_a_twisted_patch_is_folded_and_the_guarded_relaxation_alone_leaves_it_so(self):
-        for radius, angle in self.TWISTS:
-            with self.subTest(radius=radius, angle=angle):
-                vertices, quads, _, _ = self.twisted_sphere(radius, angle)
-                w = np.ones(len(vertices))
-                self.assertFalse(style.cavity_vertices(vertices, quads, w, EGG).any())     # all egg surface
-                self.assertGreaterEqual(self.spoiled_corners(self.after_the_blend(vertices, quads, w), quads), 8)
-                self.assertGreaterEqual(self.spoiled_corners(self.relaxed_only(vertices, quads, w), quads), 8)
-
-    def test_the_untangling_turns_every_corner_of_a_twisted_patch_outward(self):
-        for radius, angle in self.TWISTS:
-            with self.subTest(radius=radius, angle=angle):
-                vertices, quads, centre, edge = self.twisted_sphere(radius, angle)
-                w = np.ones(len(vertices))
-                out = style.make_egg_head(vertices, quads, w, EGG)
-                self.assertEqual(self.spoiled_corners(out, quads), 0)
-                np.testing.assert_allclose(style.egg_value(EGG, out), 1.0, atol=1e-9)         # still on the egg
-                # and only the neighbourhood of the twist was touched, relative to the relaxation
-                relaxed = self.relaxed_only(vertices, quads, w)
-                changed = np.any(out != relaxed, axis=1)
-                self.assertTrue(changed.any())
-                far = np.linalg.norm(relaxed - relaxed[centre], axis=1) > (radius + 3.0) * edge
-                self.assertFalse(changed[far].any())
-
-    def test_untangling_that_runs_out_of_steps_fails_loudly(self):
-        vertices, quads, _, _ = self.twisted_sphere(*self.TWISTS[0])
-        with mock.patch.object(style, "_UNTANGLE_ROUNDS", 0):
-            with self.assertRaisesRegex(RuntimeError, "still folded or collapsed"):
-                style.make_egg_head(vertices, quads, np.ones(len(vertices)), EGG)
-
-    def test_a_head_with_nothing_folded_is_not_untangled(self):
+    def test_a_mirror_symmetric_head_stays_exactly_mirror_symmetric(self):
         vertices, quads = nosed_sphere()
-        w = np.ones(len(vertices))
-        self.assertEqual(style.make_egg_head(vertices, quads, w, EGG).tobytes(),
-                         self.relaxed_only(vertices, quads, w).tobytes())
+        partner = mirror_of(vertices)
+        self.assertTrue((partner >= 0).all())
+        out = style.make_egg_head(vertices, quads, neck_weights(vertices), EGG)
+        np.testing.assert_array_equal(out[partner] * [-1.0, 1.0, 1.0], out)
 
     def test_flip_guard_reverts_every_vertex_of_a_quad_that_turns_inward(self):
         c = np.array([0.0, 0.0, -1.0])
@@ -386,8 +303,6 @@ class EggHead(unittest.TestCase):
         np.testing.assert_array_equal(style._revert_flips(before, after, quads, c), after)
 
     def test_flip_guard_lets_an_inward_quad_turn_outward(self):
-        # The same square seen from the other side of it: it faces toward c to begin with, and the
-        # move that turns it over (what the old normal-against-normal rule forbade) is the cure.
         c = np.array([0.0, 0.0, 1.0])
         before = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=float)    # faces +z, toward c
         after = before.copy()
@@ -398,7 +313,6 @@ class EggHead(unittest.TestCase):
         np.testing.assert_array_equal(style._revert_flips(before, after, quads, c), after)
 
     def test_flip_guard_ignores_quads_that_were_already_inward(self):
-        # An inward quad that stays inward is nobody's regression: moving it is allowed.
         c = np.array([0.0, 0.0, 1.0])
         before = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=float)    # faces +z, toward c
         after = before + np.array([[0.1, 0, 0], [0.1, 0.05, 0], [0.1, 0.1, 0], [0.1, 0.0, -0.2]])
@@ -407,9 +321,6 @@ class EggHead(unittest.TestCase):
         np.testing.assert_array_equal(style._revert_flips(before, after, quads, c), after)
 
     def test_flip_guard_cascades_to_neighbouring_quads(self):
-        # Two quads sharing the edge 1-2. Only the right quad turns inward in the round, but
-        # reverting its vertices (1, 2, 4, 5) leaves the left quad with a moved vertex 3 beside
-        # an unmoved vertex 1, and that mix turns it inward. The guard must keep going.
         c = np.array([1.0, 0.5, -1.0])
         before = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [2, 0, 0], [2, 1, 0]], dtype=float)
         quads = np.array([[0, 1, 2, 3], [1, 4, 5, 2]])
@@ -419,28 +330,23 @@ class EggHead(unittest.TestCase):
         after[5] = [0.0, -1.0, 0.0]
         faced_out = outward(before, quads, c) > 0
         turned_in = faced_out & (outward(after, quads, c) <= 0)
-        self.assertEqual(turned_in.tolist(), [False, True])             # the setup is what we think it is
+        self.assertEqual(turned_in.tolist(), [False, True])
         out = style._revert_flips(before, after, quads, c)
         self.assertTrue(np.all(outward(out, quads, c) > 0))
         np.testing.assert_array_equal(out, before)
 
     def test_flip_guard_looks_at_every_corner_triangle(self):
-        # A dart: pulling vertex 2 in past the diagonal leaves the quad as a whole facing +z, away
-        # from c, but its reflex corner (vertex 2) faces -z. That corner is the triangle that
-        # `triangulate` cuts out of the quad along the other diagonal, so the guard must refuse it.
         c = np.array([0.0, 0.0, -1.0])
         before = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=float)
         after = before.copy()
         after[2] = [0.3, 0.3, 0.0]
         quads = np.array([[0, 1, 2, 3]])
-        self.assertGreater(outward(after, quads, c)[0], 0.0)                 # outward as a quad ...
+        self.assertGreater(outward(after, quads, c)[0], 0.0)
         facing, _ = style._corners(after, quads, c)
-        self.assertEqual((facing[0] <= 0.0).tolist(), [False, False, True, False])   # ... but one corner is in
+        self.assertEqual((facing[0] <= 0.0).tolist(), [False, False, True, False])
         np.testing.assert_array_equal(style._revert_flips(before, after, quads, c), before)
 
     def test_flip_guard_will_not_squash_a_corner_below_the_area_floor(self):
-        # The far side of a 1 cm quad slides down to 0.1 micron from the near side: still facing
-        # outward, every corner a sliver of 5e-10 m^2, under the floor and under what it was.
         c = np.array([0.0, 0.0, -1.0])
         before = np.array([[0, 0, 0], [0.01, 0, 0], [0.01, 0.01, 0], [0, 0.01, 0]], dtype=float)
         quads = np.array([[0, 1, 2, 3]])
@@ -448,182 +354,226 @@ class EggHead(unittest.TestCase):
         squashed[2:, 1] = 1e-7
         _, area = style._corners(squashed, quads, c)
         self.assertLess(area.max(), style._AREA_FLOOR)
-        self.assertGreater(outward(squashed, quads, c)[0], 0.0)
         np.testing.assert_array_equal(style._revert_flips(before, squashed, quads, c), before)
-        # a squash that keeps every corner above the floor is nobody's business
         thin = before.copy()
         thin[2:, 1] = 1e-3
         np.testing.assert_array_equal(style._revert_flips(before, thin, quads, c), thin)
 
     def test_flip_guard_lets_a_tiny_corner_grow_or_stay(self):
-        # Only getting smaller is refused: a sliver that starts under the floor may widen.
         c = np.array([0.0, 0.0, -1.0])
         quads = np.array([[0, 1, 2, 3]])
         sliver = np.array([[0, 0, 0], [0.01, 0, 0], [0.01, 1e-7, 0], [0, 1e-7, 0]], dtype=float)
         wider = sliver.copy()
-        wider[2:, 1] = 2e-7                           # 1e-9 m^2: bigger, but still under the floor
+        wider[2:, 1] = 2e-7
         np.testing.assert_array_equal(style._revert_flips(sliver, wider, quads, c), wider)
 
 
-class CavityTuck(unittest.TestCase):
-    """A pocket in the sphere, like an eye socket: the quads around four vertices are turned
-    inside out and those vertices pushed 2 cm in, so their vertex normals face the centre."""
-    DEPTH = 0.002
+class FacelessHead(unittest.TestCase):
+    """The head's cavities and overhangs (eye sockets, mouth, nostrils, the ears' backs) have to end up
+    as one smooth sheet on the egg: no layer may pass through another, none may face inward."""
 
-    def pocket_sphere(self):
+    @staticmethod
+    def pocket_sphere():
+        """The sphere with a socket wider inside than its mouth, like an eye under its lids: the front
+        patch within 3 cm sunk up to 2 cm and spread sideways (a point at fraction r of the radius moves
+        out to r (1 + 2 (1 - r)^2)), so its inner walls lie behind the rim as seen from the centre and
+        a radial projection lays them over the face."""
         points, quads = cube_sphere(16)
         vertices = EGG.centre + 0.1 * points
-        aim = np.array([0.2, 0.1, 1.0]) / np.linalg.norm([0.2, 0.1, 1.0])
-        centroids = points[quads].mean(axis=1)
-        pocket = np.unique(quads[np.argmax(centroids @ aim)])               # the four corners of one quad
-        in_pocket = np.zeros(len(points), dtype=bool)
-        in_pocket[pocket] = True
-        touching = in_pocket[quads].any(axis=1)                              # 9 quads
-        quads = quads.copy()
-        quads[touching] = quads[touching][:, ::-1]
-        vertices[pocket] -= 0.02 * points[pocket]
-        return vertices, quads, in_pocket, touching
+        front = int(np.argmax(points @ np.array([0.0, 0.1, 1.0])))
+        normal = points[front]
+        d = vertices - vertices[front]
+        across = d - np.outer(d @ normal, normal)
+        r = np.linalg.norm(across, axis=1) / 0.03
+        near = r < 1.0
+        vertices[near] = (vertices[front] + across[near] * (1.0 + 2.0 * (1.0 - r[near]) ** 2)[:, np.newaxis]
+                          - 0.02 * np.outer(1.0 - r[near] ** 2, normal))
+        return vertices, quads, near
 
-    def test_cavity_vertices_flags_exactly_the_pocket(self):
-        vertices, quads, in_pocket, _ = self.pocket_sphere()
-        self.assertEqual(in_pocket.sum(), 4)
-        flagged = style.cavity_vertices(vertices, quads, np.ones(len(vertices)), EGG)
-        self.assertEqual(flagged.dtype, bool)
-        np.testing.assert_array_equal(flagged, in_pocket)
-
-    def test_only_fully_weighted_vertices_can_be_cavity(self):
-        vertices, quads, in_pocket, _ = self.pocket_sphere()
-        w = np.ones(len(vertices))
-        w[np.flatnonzero(in_pocket)[0]] = 0.998
-        flagged = style.cavity_vertices(vertices, quads, w, EGG)
-        self.assertEqual(flagged.sum(), 3)
-        self.assertFalse(flagged[np.flatnonzero(in_pocket)[0]])
-
-    def test_a_clean_sphere_has_no_cavity(self):
+    @staticmethod
+    def undercut_sphere():
+        """A socket that is wider inside than its mouth, like an eye under its lids: a patch of the
+        front turned half a turn about its centre and sunk 1 cm, which folds the surface over itself."""
         points, quads = cube_sphere(16)
         vertices = EGG.centre + 0.1 * points
-        self.assertFalse(style.cavity_vertices(vertices, quads, np.ones(len(vertices)), EGG).any())
-        vertices, quads = nosed_sphere()
-        self.assertFalse(style.cavity_vertices(vertices, quads, np.ones(len(vertices)), EGG).any())
+        front = int(np.argmax(points @ np.array([0.0, 0.05, 1.0])))
+        normal = points[front]
+        t1 = np.cross(normal, [0.0, 1.0, 0.0])
+        t1 /= np.linalg.norm(t1)
+        t2 = np.cross(normal, t1)
+        d = vertices - vertices[front]
+        near = np.linalg.norm(d, axis=1) < 0.03
+        x, y = d[near] @ t1, d[near] @ t2
+        vertices[near] = (vertices[front] - np.outer(x, t1) - np.outer(y, t2)
+                          - 0.01 * normal * (1 - (np.hypot(x, y) / 0.03) ** 2)[:, np.newaxis])
+        return vertices, quads
 
-    def test_pocket_ends_two_millimetres_inside_and_everything_else_on_the_egg(self):
-        vertices, quads, in_pocket, _ = self.pocket_sphere()
-        out = style.make_egg_head(vertices, quads, np.ones(len(vertices)), EGG)
-        surface = style.project_to_egg(EGG, out)
-        depth = np.linalg.norm(surface - out, axis=1)
-        np.testing.assert_allclose(depth[in_pocket], self.DEPTH, atol=1e-9)
-        self.assertTrue(np.all(style.egg_value(EGG, out[in_pocket]) < 1.0))
-        np.testing.assert_allclose(depth[~in_pocket], 0.0, atol=1e-9)
-
-    def test_no_outward_facing_surface_quad_turns_inward(self):
-        vertices, quads, in_pocket, touching = self.pocket_sphere()
-        out = style.make_egg_head(vertices, quads, np.ones(len(vertices)), EGG)
-        surface_quads = ~touching
-        self.assertGreater(outward(out, quads, EGG.centre)[surface_quads].min(), 0.0)
-
-    def test_the_tuck_is_part_of_the_blend_for_partial_weights(self):
-        # w < 0.999 vertices are never cavity and never tucked, whatever their normals say.
-        vertices, quads, in_pocket, _ = self.pocket_sphere()
-        w = np.where(in_pocket, 0.5, 1.0)
+    def check_faceless(self, vertices, quads, w):
         out = style.make_egg_head(vertices, quads, w, EGG)
-        depth = np.linalg.norm(style.project_to_egg(EGG, out) - out, axis=1)
-        np.testing.assert_allclose(depth[w >= 0.999], 0.0, atol=1e-9)
+        on_egg = w >= 0.999
+        np.testing.assert_allclose(style.egg_value(EGG, out[on_egg]), 1.0, atol=1e-9)
+        facing, area = style._corners(out, quads[(w[quads] > 0).any(axis=1)], EGG.centre)
+        self.assertGreater(facing.min(), 0.0)
+        self.assertGreater(area.min(), 0.0)
+        self.assertEqual(crossings(out, quads), 0)
+        return out
+
+    def test_a_socket_is_laid_flat_on_the_egg_not_tucked_under_it(self):
+        vertices, quads, in_pocket = self.pocket_sphere()
+        w = neck_weights(vertices)
+        self.assertTrue((w[in_pocket] == 1.0).all())
+        projected = style.project_to_egg(EGG, vertices)
+        self.assertGreater((outward(projected, quads, EGG.centre) <= 0).sum(), 0)      # projection folds it
+        self.check_faceless(vertices, quads, w)
+
+    def test_an_undercut_socket_ends_as_one_sheet_on_the_egg(self):
+        vertices, quads = self.undercut_sphere()
+        w = neck_weights(vertices)
+        projected = style.project_to_egg(EGG, vertices)
+        self.assertGreater(crossings(projected, quads) + (outward(projected, quads, EGG.centre) <= 0).sum(), 0)
+        self.check_faceless(vertices, quads, w)
+
+    def test_head_vertices_lists_every_fully_weighted_vertex(self):
+        w = np.array([0.0, 0.5, 0.999, 1.0, 0.9989])
+        np.testing.assert_array_equal(style.head_vertices(w), [2, 3])
+
+    def test_a_head_region_with_two_boundary_loops_is_an_error(self):
+        # a band round the middle of the sphere has two boundaries: no single neck to lay it out against
+        vertices, quads = nosed_sphere()
+        w = (np.abs(vertices[:, 1] - EGG.centre[1]) < 0.05).astype(float)
+        with self.assertRaisesRegex(RuntimeError, "boundary"):
+            style.make_egg_head(vertices, quads, w, EGG)
 
 
-class SmoothToes(unittest.TestCase):
-    @staticmethod
-    def bumpy_grid():
-        rng = np.random.default_rng(11)
-        n = 12
-        gx, gz = np.meshgrid(np.linspace(0, 0.1, n), np.linspace(0, 0.1, n), indexing="ij")
-        v = np.stack([gx + rng.uniform(-0.003, 0.003, gx.shape),
-                      rng.uniform(0.0, 0.02, gx.shape),
-                      gz + rng.uniform(-0.003, 0.003, gx.shape)], axis=-1).reshape(-1, 3)
-        v[::7, 1] = 0.0                                    # the sole: several vertices at the lowest y
-        quads = [[i * n + j, (i + 1) * n + j, (i + 1) * n + j + 1, i * n + j + 1]
-                 for i in range(n - 1) for j in range(n - 1)]
-        return v, np.array(quads, dtype=np.int64)
+# --------------------------------------------------------------------------- feet
 
-    def test_toe_smoothing_keeps_the_sole(self):
-        v, quads = self.bumpy_grid()
-        sole = v[:, 1] <= v[:, 1].min() + style._SOLE_BAND
-        self.assertGreater(sole.sum(), 10)
-        self.assertLess(sole.sum(), len(v))
-        out = style.smooth_toes(v, quads, np.ones(len(v)))
-        self.assertEqual(out[sole, 1].tobytes(), v[sole, 1].tobytes())
-        self.assertGreater(np.abs(out[sole][:, [0, 2]] - v[sole][:, [0, 2]]).max(), 1e-4)   # sole slides
-        self.assertLess(np.ptp(out[~sole, 1]), 0.5 * np.ptp(v[~sole, 1]))                   # bumps relax
+def tube_foot(x0: float, rings: int = 14, around: int = 16, toes: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """A synthetic left foot of quads at x = x0 running along +z: a flat-bottomed tube (`rings` rings
+    of `around` vertices, 1 cm apart, the first one open) closed at the front by a 4 x 4 grid. With
+    `toes`, the grid's columns 1 and 3 rise 2 cm in their top two rows as two toes with a gap between
+    them, so a section above the tube's top cuts them apart. Returns
+    the vertices, the quads (counter-clockwise from outside) and toe weights (1 on the grid)."""
+    vertices, quads = [], []
+    theta = 2.0 * np.pi * (np.arange(around) + 0.5) / around
+    for k in range(rings):
+        for t in theta:
+            vertices.append([x0 + 0.04 * np.cos(t), max(0.0, 0.02 + 0.022 * np.sin(t)), 0.01 * k])
+    for k in range(rings - 1):
+        for j in range(around):
+            a, b = k * around + j, k * around + (j + 1) % around
+            quads.append([a, a + around, b + around, b])
+    # the front cap: a 5 x 5 vertex grid whose boundary is the last ring (16 vertices)
+    last = (rings - 1) * around
+    border = [(i, 0) for i in range(4)] + [(4, j) for j in range(4)] + [(i, 4) for i in range(4, 0, -1)] + \
+             [(0, j) for j in range(4, 0, -1)]
+    # border cells and ring vertices both go once round the tube: pair them in angular order
+    border.sort(key=lambda cell: np.arctan2(cell[1] - 2.0, cell[0] - 2.0) % (2.0 * np.pi))
+    index = {cell: last + m for m, cell in enumerate(border)}
+    front = 0.01 * (rings - 1)
+    for i in range(1, 4):
+        for j in range(1, 4):
+            index[(i, j)] = len(vertices)
+            rises = toes and i in (1, 3) and j >= 2
+            vertices.append([x0 + 0.02 * (i - 2), 0.005 + 0.01 * j + (0.02 if rises else 0.0), front + 0.015])
+    for i in range(4):
+        for j in range(4):
+            quads.append([index[(i, j)], index[(i, j + 1)], index[(i + 1, j + 1)], index[(i + 1, j)]])
+    vertices, quads = np.array(vertices), np.array(quads, dtype=np.int64)
+    tube, cap = slice(0, (rings - 1) * around), slice((rings - 1) * around, None)
+    # each part was built with one winding: turn it round as a whole if it faces in
+    if outward(vertices, quads[tube][:1], np.array([x0, 0.02, 0.01 * quads[tube][0, 0] // around]))[0] < 0:
+        quads[tube] = quads[tube][:, ::-1]
+    if outward(vertices, quads[cap], np.array([x0, 0.02, front - 0.05])).sum() < 0:
+        quads[cap] = quads[cap][:, ::-1]
+    toe_w = np.zeros(len(vertices))
+    toe_w[last + around:] = 1.0
+    return vertices, quads, toe_w
 
-    def test_zero_weight_vertices_never_move(self):
-        v, quads = self.bumpy_grid()
-        w = (v[:, 0] > 0.05).astype(float)
-        out = style.smooth_toes(v, quads, w)
-        self.assertEqual(out[w == 0].tobytes(), v[w == 0].tobytes())
-        self.assertGreater(np.linalg.norm(out[w == 1] - v[w == 1], axis=1).max(), 1e-4)
 
-    def test_sole_is_measured_where_the_toe_weight_is(self):
-        # Vertices outside the region do not set the sole height: a low heel (w = 0) must not
-        # turn the toes' own lowest vertices into free movers.
-        v, quads = self.bumpy_grid()
-        v[0, 1] = -0.05
-        w = np.ones(len(v))
-        w[0] = 0.0
-        sole = (v[:, 1] <= v[1:, 1].min() + style._SOLE_BAND) & (w > 0)
-        out = style.smooth_toes(v, quads, w)
-        self.assertEqual(out[sole, 1].tobytes(), v[sole, 1].tobytes())
+def two_tube_feet(toes: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """`tube_foot` at x = 0.1 and its mirror image at x = -0.1 (vertex i of the right foot mirrors vertex i
+    of the left)."""
+    left, quads, toe_w = tube_foot(0.1, toes=toes)
+    right = left * [-1.0, 1.0, 1.0]
+    return np.vstack([left, right]), np.vstack([quads, quads[:, ::-1] + len(left)]), np.concatenate([toe_w, toe_w])
 
-    @staticmethod
-    def pad_sheet() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
-        """Like the underside of a foot, as a height field of 5 mm cells: a flat floor on the left,
-        a raised arch (10.5 mm) to the right of it, and one pad vertex that touches down in the
-        arch, 2.5 mm up. Only that pad and one floor vertex (the lowest sole point) are toes;
-        everything else is held. Returns vertices, quads, triangles, toe weights, the pad's index."""
-        n, m = 14, 9
-        heights = np.zeros((n, m))
-        heights[4:, :] = 0.0105
-        heights[9, 4] = 0.0025
-        v = np.array([[i * 0.005, heights[i, j], j * 0.005] for i in range(n) for j in range(m)])
-        quads = np.array([[i * m + j, (i + 1) * m + j, (i + 1) * m + j + 1, i * m + j + 1]
-                          for i in range(n - 1) for j in range(m - 1)], dtype=np.int64)
-        tris = np.concatenate([quads[:, [0, 1, 2]], quads[:, [0, 2, 3]]])
-        w = np.zeros(n * m)
-        w[9 * m + 4] = 1.0                   # the pad
-        w[1 * m + 4] = 1.0                   # a floor vertex: the lowest toe vertex, y = 0
-        return v, quads, tris, w, 9 * m + 4
 
-    def test_a_pad_just_above_the_sole_band_is_not_held(self):
-        # The sole is what lies within `_SOLE_BAND` of the lowest toe vertex, and this pad is 2.5 mm
-        # up: it must relax into the arch around it, where a pad pinned at 2.5 mm would stay a pocket.
-        v, quads, tris, w, pad = self.pad_sheet()
-        out = style.smooth_toes(v, quads, w)
-        self.assertGreater(out[pad, 1], 0.010)                    # up in the arch, not held at 2.5 mm
-        self.assertEqual(out[4, 1], 0.0)                          # the lowest vertex stays on the floor
+class RoundForefeet(unittest.TestCase):
+    def setUp(self):
+        self.vertices, self.quads, self.toe_w = two_tube_feet()
+        self.tris = pose.triangulate(self.vertices, self.quads)
 
-    def test_the_sole_band_is_2_2_mm(self):
-        v, quads, tris, w, pad = self.pad_sheet()
-        for height, held in ((0.0020, True), (0.0025, False)):
-            v[pad, 1] = height
-            out = style.smooth_toes(v, quads, w)
-            self.assertEqual(bool(out[pad, 1] == height), held, f"vertex {height * 1000} mm above the lowest")
+    def pieces(self, vertices, mask, side):
+        """Pieces of the forefoot in each 2 mm section from 5 mm up to the forefoot's top."""
+        part = mask & (side * vertices[:, 0] > 0)
+        top = vertices[part, 1].max()
+        return [measure.section_loops(vertices, self.tris, y, part) for y in np.arange(0.005, top, 0.002)]
 
-    def test_a_pad_that_is_not_held_no_longer_cuts_its_own_loop_at_1_cm(self):
-        v, quads, tris, w, pad = self.pad_sheet()
-        everything = np.ones(len(v), dtype=bool)
-        self.assertEqual(measure.section_loops(v, tris, 0.01, everything), 2)             # floor edge + pad pocket
-        out = style.smooth_toes(v, quads, w)
-        self.assertEqual(measure.section_loops(out, tris, 0.01, everything), 1)
+    def test_the_synthetic_toes_are_separate(self):
+        forefoot = self.vertices[:, 2] > 0.06
+        self.assertIn(2, self.pieces(self.vertices, forefoot, 1.0))
 
-    def test_rounds_and_determinism(self):
-        v, quads = self.bumpy_grid()
-        w = np.ones(len(v))
-        before = v.copy()
-        once = style.smooth_toes(v, quads, w, rounds=1)
-        forty = style.smooth_toes(v, quads, w)
-        np.testing.assert_array_equal(v, before)
-        np.testing.assert_array_equal(forty, style.smooth_toes(v, quads, w, rounds=40))
-        self.assertEqual(forty.tobytes(), style.smooth_toes(v, quads, w).tobytes())
-        self.assertGreater(np.abs(forty - once).max(), 1e-4)
-        np.testing.assert_array_equal(style.smooth_toes(v, quads, w, rounds=0), v)
+    def test_the_forefoot_is_one_piece_at_every_height(self):
+        out, forefoot = style.round_forefeet(self.vertices, self.quads, self.toe_w)
+        mask = np.zeros(len(out), dtype=bool)
+        mask[forefoot] = True
+        self.assertTrue((mask[self.toe_w >= 0.5]).all())
+        for side in (1.0, -1.0):
+            pieces = self.pieces(out, mask, side)
+            self.assertGreater(len(pieces), 10)
+            self.assertEqual(set(pieces), {1})
+
+    def test_no_triangles_pass_through_each_other_and_none_collapse(self):
+        out, _ = style.round_forefeet(self.vertices, self.quads, self.toe_w)
+        self.assertEqual(crossings(out, self.quads), 0)
+        a, b, c = (out[self.tris[:, k]] for k in range(3))
+        self.assertGreater((0.5 * np.linalg.norm(np.cross(b - a, c - a), axis=1)).min(), 1e-9)
+
+    def test_the_sole_stays_flat_on_the_floor(self):
+        out, forefoot = style.round_forefeet(self.vertices, self.quads, self.toe_w)
+        self.assertEqual(out[:, 1].min(), 0.0)
+        self.assertGreater((out[forefoot, 1] == 0.0).sum(), 4)
+
+    def test_only_the_forefoot_moves(self):
+        out, forefoot = style.round_forefeet(self.vertices, self.quads, self.toe_w)
+        still = np.ones(len(out), dtype=bool)
+        still[forefoot] = False
+        self.assertEqual(out[still].tobytes(), self.vertices[still].tobytes())
+        self.assertGreater(np.abs(out[forefoot] - self.vertices[forefoot]).max(), 0.005)
+
+    def test_the_feet_are_exact_mirror_images(self):
+        out, forefoot = style.round_forefeet(self.vertices, self.quads, self.toe_w)
+        half = len(out) // 2
+        np.testing.assert_array_equal(out[half:], out[:half] * [-1.0, 1.0, 1.0])
+        self.assertEqual(len(forefoot) % 2, 0)
+
+    def test_input_is_not_modified_and_output_is_deterministic(self):
+        before = self.vertices.copy()
+        first, ff1 = style.round_forefeet(self.vertices, self.quads, self.toe_w)
+        second, ff2 = style.round_forefeet(self.vertices, self.quads, self.toe_w)
+        np.testing.assert_array_equal(self.vertices, before)
+        self.assertEqual(first.tobytes(), second.tobytes())
+        np.testing.assert_array_equal(ff1, ff2)
+
+    def test_the_forefoot_stays_inside_the_box_round_the_old_one(self):
+        # it may not grow forward, up or out to the sides (backward is where it meets the rest of the foot)
+        out, forefoot = style.round_forefeet(self.vertices, self.quads, self.toe_w)
+        for side in (1.0, -1.0):
+            part = forefoot[side * self.vertices[forefoot, 0] > 0]
+            lo, hi = self.vertices[part].min(axis=0), self.vertices[part].max(axis=0)
+            self.assertTrue(np.all(out[part] <= hi + 1e-3))
+            self.assertTrue(np.all(out[part][:, :2] >= lo[:2] - 1e-3))
+
+    def test_a_forefoot_that_runs_out_of_its_box_is_an_error(self):
+        # a shell that never stops a ray at the floor: what a ray grazing the floor would do
+        with mock.patch.object(style._Shell, "floor_distance", lambda shell, d: np.full(len(d), 10.0)), \
+                self.assertRaisesRegex(RuntimeError, "outside the box"):
+            style.round_forefeet(self.vertices, self.quads, self.toe_w)
+
+    def test_a_foot_without_an_edge_loop_behind_the_toes_is_an_error(self):
+        # weights on the whole tube: no loop is left behind the toes
+        with self.assertRaisesRegex(RuntimeError, "edge loop"):
+            style.round_forefeet(self.vertices, self.quads, np.ones(len(self.vertices)))
 
 
 if __name__ == "__main__":

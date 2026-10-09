@@ -40,10 +40,12 @@ struct Egg {
   Vec3d radii{1, 1, 1};
   double taper = 1;
 
-  // 1 on the surface, below 1 inside, above 1 outside.
+  // 1 on the surface, below 1 inside, above 1 outside. Below the centre the horizontal radii shrink with
+  // the square of the depth, to `taper` at the bottom pole (no kink at the centre).
   double value(const Vec3d& p) const {
     const Vec3d q = p - centre;
-    const double k = q.y() >= 0.0 ? 1.0 : 1.0 - (1.0 - taper) * std::min(1.0, -q.y() / radii.y());
+    const double s = std::clamp(-q.y() / radii.y(), 0.0, 1.0);
+    const double k = 1.0 - (1.0 - taper) * s * s;
     return std::pow(q.x() / (radii.x() * k), 2) + std::pow(q.y() / radii.y(), 2) +
            std::pow(q.z() / (radii.z() * k), 2);
   }
@@ -382,6 +384,10 @@ TEST(Mannequin, EggHead) {
   forEachBody([](const Body& b) {
     const auto& vertices = b.mannequin.mesh.vertices;
     ASSERT_FALSE(b.headVertices.empty());
+    // Every vertex of the head proper is on the egg now (no cavities tucked under it): the 3634 vertices
+    // with head weight >= 0.999, the Head region's vertices.
+    EXPECT_EQ(b.headVertices.size(), 3634u);
+    EXPECT_EQ(b.headVertices, b.regionVertices.at(BodyRegion::Head));
 
     double worst = 0;
     for (const std::uint32_t i : b.headVertices) {
@@ -390,8 +396,7 @@ TEST(Mannequin, EggHead) {
     }
     EXPECT_LE(worst, 0.001) << "farthest head vertex from the egg, m";
 
-    // The eye sockets and mouth are cavities tucked inside the egg; only triangles wholly on
-    // the egg surface must face outward.
+    // Every triangle wholly on the egg faces outward: the eye sockets, mouth and nostrils lie flat on it.
     std::vector<bool> onEgg(vertices.size(), false);
     for (const std::uint32_t i : b.headVertices) onEgg[i] = true;
     int checked = 0, inward = 0;
