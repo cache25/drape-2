@@ -530,6 +530,82 @@ TEST(MannequinLoader, MissingRegionIsRejected) {
   EXPECT_TRUE(contains(message, "missing region 'Waist'")) << message;
 }
 
+// Copies the committed male mannequin into `dir`, with `edit` applied to its JSON description.
+template <class Edit>
+void writeEditedMale(const fs::path& dir, Edit edit) {
+  fs::copy_file(assetDir() / "male.obj", dir / "male.obj");
+  json doc = readJson(assetDir() / "male.json");
+  edit(doc);
+  writeText(dir / "male.json", doc.dump(1));
+}
+
+TEST(MannequinLoader, NonIntegerFormatIsRejected) {
+  for (const json& format : {json(1.5), json("1")}) {
+    SCOPED_TRACE(format.dump());
+    TempDir dir;
+    writeEditedMale(dir.path(), [&](json& doc) { doc["format"] = format; });
+    const std::string message = loadFailure(BodyType::Male, dir.path());
+    EXPECT_TRUE(contains(message, (dir.path() / "male.json").string())) << message;
+    EXPECT_TRUE(contains(message, "format must be an integer")) << message;
+  }
+}
+
+TEST(MannequinLoader, MissingLandmarkIsRejected) {
+  // Every landmark the builder writes is required; the tee drapes and the tests rely on them.
+  for (const char* key : {"chest", "hps_left", "elbow_right", "ankle_left", "crotch"}) {
+    SCOPED_TRACE(key);
+    TempDir dir;
+    writeEditedMale(dir.path(), [&](json& doc) { doc.at("landmarks").erase(key); });
+    const std::string message = loadFailure(BodyType::Male, dir.path());
+    EXPECT_TRUE(contains(message, (dir.path() / "male.json").string() + ": missing landmark '" + key + "'"))
+        << message;
+  }
+}
+
+TEST(MannequinLoader, MissingGirthIsRejected) {
+  for (const char* key : {"chest", "waist", "hip", "neck"}) {
+    SCOPED_TRACE(key);
+    TempDir dir;
+    writeEditedMale(dir.path(), [&](json& doc) { doc.at("girths").erase(key); });
+    const std::string message = loadFailure(BodyType::Male, dir.path());
+    EXPECT_TRUE(contains(message, (dir.path() / "male.json").string() + ": missing girth '" + key + "'"))
+        << message;
+  }
+}
+
+// Changes the working directory for the scope, and back.
+class WorkingDirectory {
+ public:
+  explicit WorkingDirectory(const fs::path& dir) : previous_(fs::current_path()) { fs::current_path(dir); }
+  ~WorkingDirectory() {
+    std::error_code ignored;
+    fs::current_path(previous_, ignored);
+  }
+  WorkingDirectory(const WorkingDirectory&) = delete;
+  WorkingDirectory& operator=(const WorkingDirectory&) = delete;
+
+ private:
+  fs::path previous_;
+};
+
+TEST(MannequinLoader, ErrorsNameTheAbsolutePath) {
+  TempDir dir;
+  writeEditedMale(dir.path(), [](json& doc) { doc.at("girths").erase("waist"); });
+  WorkingDirectory cwd(dir.path().parent_path());
+  const fs::path relative = dir.path().filename();
+  ASSERT_TRUE(relative.is_relative());
+
+  const std::string jsonError = loadFailure(BodyType::Male, relative);
+  EXPECT_EQ(jsonError.rfind((fs::current_path() / relative / "male.json").string() + ": missing girth 'waist'", 0),
+            0u)
+      << jsonError;
+
+  const std::string objError = loadFailure(BodyType::Male, relative / "nowhere");
+  EXPECT_EQ(objError.rfind((fs::current_path() / relative / "nowhere" / "male.obj").string() + ": cannot open", 0),
+            0u)
+      << objError;
+}
+
 TEST(MannequinLoader, TruncatedJsonNamesTheFile) {
   TempDir dir;
   fs::copy_file(assetDir() / "male.obj", dir.path() / "male.obj");

@@ -30,9 +30,11 @@ struct Mannequin {
 };
 
 // Reads <mannequinDir>/<body>.obj and <body>.json. The first overload reads DRAPE_ASSET_DIR/mannequins.
-// A missing or malformed file throws std::runtime_error whose message starts with the file path
-// (and the line number, for OBJ syntax errors). An OBJ that is empty, truncated or otherwise not a
-// closed manifold throws "<obj path>: mesh is not a closed manifold".
+// A missing or malformed file throws std::runtime_error whose message starts with the file's absolute path
+// (std::filesystem::absolute, symlinks not resolved; and the line number, for OBJ syntax errors). An OBJ that
+// is empty, truncated or otherwise not a closed manifold throws "<obj path>: mesh is not a closed manifold".
+// The JSON must have an integer "format" of 1, all eight regions, every landmark the builder writes and the
+// four girths; a missing one throws "<json path>: missing landmark 'chest'" (or region, girth).
 Mannequin loadMannequin(BodyType type);
 Mannequin loadMannequin(BodyType type, const std::filesystem::path& mannequinDir);
 
