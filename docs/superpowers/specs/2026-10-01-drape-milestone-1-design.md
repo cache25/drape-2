@@ -1,6 +1,6 @@
 # Drape — Milestone 1 Design Spec
 
-**Status:** Approved 2026-10-01; amended during Phase A planning (bending constants, seam assembly, dependency versions) and Phase A execution (solver method XPBD → implicit Newton–CG and quality defaults, Section 5.1; bending constants re-measured, Section 5.4; body contact and friction inside the solve, plus the snapshot contents, Sections 5.2 and 5.5); Phase A2 mannequins (Sections 8.1, 12.5, 17)
+**Status:** Approved 2026-10-01; amended during Phase A planning (bending constants, seam assembly, dependency versions) and Phase A execution (solver method XPBD → implicit Newton–CG and quality defaults, Section 5.1; bending constants re-measured, Section 5.4; body contact and friction inside the solve, plus the snapshot contents, Sections 5.2 and 5.5); Phase A2 mannequins (Sections 8.1, 12.5, 17); Phase B Mac app shell (Sections 3.4, 13.1, 17)
 **Date:** 2026-10-01
 **Owner:** Ian Schory
 **Scope:** Sub-project #1 of the Drape roadmap: pre-made garments draped on a sized avatar, with real fabric physics and high-quality real-time rendering, for Apple Silicon Macs.
@@ -139,8 +139,8 @@ All are cleared for closed-source commercial use.
 
 | Component | Use | License |
 |---|---|---|
-| Qt 6 (latest LTS) | UI framework | LGPL v3 (dynamically linked); commercial license later |
-| Filament (pinned release) | Real-time physically based renderer with a cloth shading model, Metal backend | Apache 2.0 |
+| Qt 6 (6.12 from Homebrew during development) | UI framework | LGPL v3 (dynamically linked); commercial license later |
+| Filament (v1.78.1 prebuilt macOS release) | Real-time physically based renderer with a cloth shading model, Metal backend | Apache 2.0 |
 | metal-cpp | Apple's official C++ bindings for Metal | Apache 2.0 |
 | MakeHuman base mesh, shape targets, skeleton | Avatar | CC0 |
 | CDT (artem-ogre) | Constrained Delaunay triangulation of pattern pieces | MPL 2.0 |
@@ -576,7 +576,7 @@ Before milestone 1 is called done, two designers who have not seen Drape before 
 ### 13.1 Toolchain
 
 - C++20, CMake with presets, Ninja.
-- Source dependencies pinned to exact versions via CMake FetchContent: nlohmann/json v3.12.0, miniz 3.1.0, GoogleTest v1.17.0, CDT 1.4.5. Eigen 3.4 comes from the system package manager (apt on Linux, Homebrew on Mac). Qt comes from the official Qt installer (latest Qt 6 LTS). Filament comes from its official prebuilt macOS release (pinned).
+- Source dependencies pinned to exact versions via CMake FetchContent: nlohmann/json v3.12.0, miniz 3.1.0, GoogleTest v1.17.0, CDT 1.4.5. Eigen 3.4 comes from the system package manager (apt on Linux, Homebrew on Mac). Qt comes from Homebrew (`qtbase`, 6.12) during development; the shipping build may move to the official LTS. Filament comes from its official prebuilt macOS release, pinned to v1.78.1.
 - **Targets:** macOS 14+ on arm64 for the app. Linux x86-64 for the portable modules (development and CI only).
 
 ### 13.2 Workflow
@@ -653,7 +653,7 @@ Milestone 1 is too large for one implementation plan. It is built in six phases.
 |---|---|---|
 | A. Foundations | `drape_core` data model and `.drape` files; sim mesh builder; `CpuSolver` with stretch, bending, seams, gravity, damping and body collision; the collision-field bake from `drape_avatar`, run on a static test body mesh; test tee generator; physics tests 1, 2 and 4 (Section 12.2). Result: the test tee drapes headlessly on a static test body, verified by tests and a developer-only OBJ dump for inspection | Linux |
 | A2. Mannequins | Male and female mannequins (MakeHuman CC0, egg head, 45° pose), builder script, loader, drape tests on both bodies (the female wears a women's cut of the test tee) | Linux |
-| B. Mac app shell | Qt app skeleton, Filament viewport, `MetalSolver` with CPU–Metal parity tests. Result: the test tee drapes live on screen | Mac |
+| B. Mac app shell | Qt app skeleton, Filament viewport, `MetalSolver` with CPU–Metal parity tests; `DrapeSession` frame-by-frame runner; app toolbar (Simulate, Reset, Quality, Body, Solver). Result: the test tee drapes live on screen | Mac |
 | C. Avatar | Measurement solver, built-in and custom size charts, Avatar panel (on top of the A2 mannequins) | Linux + Mac |
 | D. Wave 1 | Elastic, fold lines, layer order, self collision, outfit layering, air drag, mouse dragging, fit map, 13 fabric presets, Wave 1 garments, spec table, autosave and recovery, PNG capture, lighting presets, Cusick test, drape matrix, visual regression | Linux + Mac |
 | E. Wave 2 | Pressure, trims, closed zippers and flies, topstitching, jeans, cargo pants, puffer jacket | Linux + Mac |

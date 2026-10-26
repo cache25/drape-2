@@ -23,6 +23,13 @@ scripts/test-mac.sh             # every test but perf; --release runs the perf g
 The build downloads metal-cpp, the prebuilt Filament release and a CC0 studio HDRI into the build folder (pinned and
 SHA-256 checked). Compiler temp files go to `build/tmp`. Without Qt everything except the app builds.
 
+## Mac app
+
+`scripts/build-mac.sh` builds `build/mac/apps/drape/Drape.app`; open it from Finder or with
+`open build/mac/apps/drape/Drape.app`. The tee drapes live on the male mannequin on the GPU. The toolbar switches
+Quality, Body and Solver (GPU/CPU), pauses or resets the drape. Drag to orbit, right-drag or two-finger drag to pan,
+scroll or pinch to zoom. `Drape --selftest out.png` drapes, checks and saves a screenshot without interaction.
+
 Quick test loop: `ctest --preset dev -LE "slow|perf"`. Timing tests: `ctest --preset release -L perf`.
 
 ## Developer tools

@@ -44,7 +44,7 @@ On Linux, CMake skips the Mac-only targets entirely, so the cloud workspace keep
 
 | Component | Version | How it arrives |
 |---|---|---|
-| Qt 6 (Widgets) | 6.12 (Homebrew `qt`) | `brew install qt`, found with `find_package(Qt6 6.12 COMPONENTS Widgets)` |
+| Qt 6 (Widgets) | 6.12 (Homebrew `qtbase`; the full `qt` formula pulls 38 modules) | `brew install qtbase`, found with `find_package(Qt6 6.12 COMPONENTS Widgets)`; optional at configure time (without it, everything but the app builds) |
 | Filament | v1.78.1 (stable, 2026-10-21), official prebuilt macOS release | Downloaded by CMake into the build folder, SHA-256 checked |
 | metal-cpp | Apple's release matching the installed macOS SDK, pinned by URL and SHA-256 | Downloaded by CMake into the build folder |
 | CC0 studio HDRI | One Poly Haven HDRI, pinned by URL and SHA-256 | Downloaded once; converted to an IBL with Filament's `cmgen` at build time |
@@ -55,7 +55,7 @@ Nothing except Qt is installed on the Mac's internal drive (about 7 GB free).
 
 - C++20, CMake presets, Ninja, Apple Clang from Xcode. A new `mac` configure preset (Debug) and `mac-release` preset.
 - Targets: macOS 14+, arm64 only. The app is unsigned during development (signing is Phase F).
-- Metal shaders are `.metal` sources in the repo, compiled with `xcrun metal` / `metallib` at build time into a `.metallib` inside the app bundle (and next to the test binaries).
+- Metal shaders are `.metal` sources in the repo. *(As built, 2026-10-26: Xcode 26 ships the Metal shader compiler as a separate ~700 MB download, which would not fit on the development Mac; the kernel headers and wrappers are combined at build time into one `drape_kernels.metal` that `MetalSolver` compiles at runtime through Metal.framework, with fast math off. The file sits in the app bundle's Resources. A prebuilt `.metallib` can replace it once the toolchain is installed.)*
 - `scripts/build-mac.sh`: configure and build the `mac` preset.
 - `scripts/test-mac.sh`: run the Mac test suite (portable tests, Metal physics and parity tests, render smoke test, app self-test).
 
