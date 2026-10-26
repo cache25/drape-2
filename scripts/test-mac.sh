@@ -11,7 +11,20 @@ cd "$repo"
 fail() { echo "FAILED: $1"; exit 1; }
 if [[ "${1:-}" == "--release" ]]; then
   ctest --preset mac-release -L perf || fail "ctest perf (mac-release)"
-else
-  ctest --preset mac -LE perf || fail "ctest (mac)"
+  echo "ALL PASSED"
+  exit 0
 fi
+ctest --preset mac -LE perf || fail "ctest (mac)"
+
+# App self-test (Phase B spec 7.2, 7.3): drape the tee live in the window, then check the gates.
+app="build/mac/apps/drape/Drape.app/Contents/MacOS/Drape"
+[[ -x "$app" ]] || fail "app self-test: $app not built (is Qt installed?)"
+out="$("$app" --selftest build/mac/selftest.png)" || { echo "$out"; fail "app self-test exited non-zero"; }
+echo "$out"
+value() { echo "$out" | sed -n "s/.*$1=\([^ ]*\).*/\1/p" | tail -1; }
+[[ "$(value backend)" == "metal" ]] || fail "self-test did not run on Metal"
+awk -v v="$(value launch_ms)" 'BEGIN { exit !(v != "" && v < 3000) }' || fail "launch_ms $(value launch_ms) >= 3000"
+awk -v v="$(value fps_asleep)" 'BEGIN { exit !(v != "" && v >= 59.5) }' || fail "fps_asleep $(value fps_asleep) < 60"
+awk -v v="$(value tee_coverage)" 'BEGIN { exit !(v != "" && v >= 0.05 && v <= 0.40) }' \
+  || fail "tee_coverage $(value tee_coverage) outside [0.05, 0.40]"
 echo "ALL PASSED"

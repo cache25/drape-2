@@ -31,6 +31,7 @@ struct SimStatus {
   sim::DrapeState state = sim::DrapeState::Assembling;
   bool running = true;  // the thread is simulating (false once it sleeps: paused, finished or failed)
   double fps = 0;              // frames per second of wall time over the last second
+  double simulatedSeconds = 0; // simulated time of the current drape
   std::size_t particles = 0;   // 0 until the first build finishes
   std::string message;         // fallback note, the spec 5.8 failure message, or a build error
   sim::SolverBackend backend = sim::SolverBackend::Cpu;  // the backend actually in use

@@ -46,7 +46,7 @@ class Renderer {
 
   void attachLayer(void* caMetalLayer);  // window rendering into this CAMetalLayer
   void resize(std::uint32_t widthPx, std::uint32_t heightPx);
-  void renderFrame();  // no-op until attachLayer
+  bool renderFrame();  // true if a frame was presented; false before attachLayer or when the frame was skipped
   RgbaImage renderOffscreen(std::uint32_t width, std::uint32_t height);
 
  private:
@@ -58,6 +58,7 @@ class Renderer {
 void* makeMetalLayerForView(void* nsView);
 // The view's current backing scale (2.0 on Retina); call after moving between displays.
 double backingScale(void* nsView);
-void setMetalLayerScale(void* caMetalLayer, double scale);
+// Sets the layer's contents scale and drawable size (Filament renders at the drawable size). Call on every resize.
+void resizeMetalLayer(void* caMetalLayer, double scale, std::uint32_t widthPx, std::uint32_t heightPx);
 
 }  // namespace drape::render

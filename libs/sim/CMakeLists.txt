@@ -30,7 +30,7 @@ if(APPLE)
     DEPENDS ${DRAPE_KERNEL_INPUTS} ${PROJECT_SOURCE_DIR}/cmake/CombineKernels.cmake
     VERBATIM)
   add_custom_target(drape_kernel_source ALL DEPENDS ${DRAPE_KERNEL_SOURCE})
-  set(DRAPE_KERNEL_SOURCE ${DRAPE_KERNEL_SOURCE} PARENT_SCOPE)
+  set(DRAPE_KERNEL_SOURCE_FILE ${DRAPE_KERNEL_SOURCE} CACHE INTERNAL "combined Metal kernel source")
   target_sources(drape_sim PRIVATE src/gpu/metal_device.cpp src/gpu/metal_solver.cpp)
   target_link_libraries(drape_sim PRIVATE drape_metal_cpp)
   target_compile_definitions(drape_sim PRIVATE DRAPE_HAVE_METAL=1 DRAPE_KERNEL_SOURCE_PATH="${DRAPE_KERNEL_SOURCE}")

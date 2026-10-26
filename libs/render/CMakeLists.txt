@@ -12,7 +12,7 @@ drape_add_tests(drape_render_math_tests
 if(APPLE)
   enable_language(OBJCXX)
   set(DRAPE_RENDER_ASSETS ${CMAKE_BINARY_DIR}/render_assets)
-  set(DRAPE_RENDER_ASSETS ${DRAPE_RENDER_ASSETS} PARENT_SCOPE)
+  set(DRAPE_RENDER_ASSETS_DIR ${DRAPE_RENDER_ASSETS} CACHE INTERNAL "compiled materials and IBL")
   set(asset_outputs)
   foreach(m mannequin cloth)
     set(out ${DRAPE_RENDER_ASSETS}/materials/${m}.filamat)

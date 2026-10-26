@@ -85,6 +85,7 @@ void SimController::loop() {
     std::lock_guard lock(mutex_);
     status_.state = state;
     status_.fps = static_cast<double>(frameTimes_.size());
+    status_.simulatedSeconds = session_->simulatedSeconds();
     if (state == sim::DrapeState::Failed) status_.message = session_->result().message;
   }
 }
@@ -130,6 +131,7 @@ void SimController::rebuild(const SimConfig& config) {
   status_.state = session_->state();
   status_.particles = solver_->particleCount();
   status_.fps = 0;
+  status_.simulatedSeconds = 0;
   status_.message = message;
   status_.backend = backend;
   if (!gpuAvailable) status_.gpuAvailable = false;

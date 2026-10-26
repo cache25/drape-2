@@ -92,6 +92,7 @@ TEST(SimController, ReachesSettled) {
   EXPECT_EQ(f.positions.size(), f.scene->mesh.rest.size());
   EXPECT_EQ(c.status().particles, f.positions.size());
   EXPECT_EQ(c.status().backend, sim::SolverBackend::Cpu);
+  EXPECT_GT(c.status().simulatedSeconds, 1.0);
 }
 
 TEST(SimController, PauseStopsFrames) {

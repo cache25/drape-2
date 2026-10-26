@@ -20,8 +20,10 @@ double backingScale(void* nsView) {
   return view.window ? view.window.backingScaleFactor : NSScreen.mainScreen.backingScaleFactor;
 }
 
-void setMetalLayerScale(void* caMetalLayer, double scale) {
-  ((__bridge CAMetalLayer*)caMetalLayer).contentsScale = scale;
+void resizeMetalLayer(void* caMetalLayer, double scale, std::uint32_t widthPx, std::uint32_t heightPx) {
+  CAMetalLayer* layer = (__bridge CAMetalLayer*)caMetalLayer;
+  layer.contentsScale = scale;
+  layer.drawableSize = CGSizeMake(widthPx, heightPx);
 }
 
 }  // namespace drape::render

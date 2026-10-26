@@ -301,15 +301,15 @@ void Renderer::resize(std::uint32_t widthPx, std::uint32_t heightPx) {
   impl_->height = std::max<std::uint32_t>(heightPx, 1);
 }
 
-void Renderer::renderFrame() {
+bool Renderer::renderFrame() {
   auto& s = *impl_;
-  if (!s.swapChain) return;
+  if (!s.swapChain) return false;
   s.view->setViewport({0, 0, s.width, s.height});
   s.updateCamera(s.width, s.height);
-  if (s.renderer->beginFrame(s.swapChain)) {
-    s.renderer->render(s.view);
-    s.renderer->endFrame();
-  }
+  if (!s.renderer->beginFrame(s.swapChain)) return false;
+  s.renderer->render(s.view);
+  s.renderer->endFrame();
+  return true;
 }
 
 RgbaImage Renderer::renderOffscreen(std::uint32_t width, std::uint32_t height) {
