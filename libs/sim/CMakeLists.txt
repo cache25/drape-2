@@ -15,3 +15,30 @@ drape_add_tests(drape_sim_slow_tests
 # GPU kernel headers (compiled as C++ here and as Metal Shading Language on Macs).
 target_include_directories(drape_sim PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernels)
 target_include_directories(drape_sim_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernels)
+
+# Metal backend (Apple only). The kernel headers and wrappers are combined into one Metal source that MetalDevice
+# compiles at runtime (the separate Metal toolchain download is not needed).
+if(APPLE)
+  set(DRAPE_KERNEL_INPUTS
+    ${CMAKE_CURRENT_SOURCE_DIR}/kernels/gpu_compat.h ${CMAKE_CURRENT_SOURCE_DIR}/kernels/gpu_layout.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/kernels/term_math.h ${CMAKE_CURRENT_SOURCE_DIR}/kernels/kernels.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/kernels/drape_kernels.metal)
+  set(DRAPE_KERNEL_SOURCE ${CMAKE_BINARY_DIR}/drape_kernels.metal)
+  add_custom_command(OUTPUT ${DRAPE_KERNEL_SOURCE}
+    COMMAND ${CMAKE_COMMAND} -DOUT=${DRAPE_KERNEL_SOURCE} "-DINPUTS=${DRAPE_KERNEL_INPUTS}"
+            -P ${PROJECT_SOURCE_DIR}/cmake/CombineKernels.cmake
+    DEPENDS ${DRAPE_KERNEL_INPUTS} ${PROJECT_SOURCE_DIR}/cmake/CombineKernels.cmake
+    VERBATIM)
+  add_custom_target(drape_kernel_source ALL DEPENDS ${DRAPE_KERNEL_SOURCE})
+  set(DRAPE_KERNEL_SOURCE ${DRAPE_KERNEL_SOURCE} PARENT_SCOPE)
+  target_sources(drape_sim PRIVATE src/gpu/metal_device.cpp src/gpu/metal_solver.cpp)
+  target_link_libraries(drape_sim PRIVATE drape_metal_cpp)
+  target_compile_definitions(drape_sim PRIVATE DRAPE_HAVE_METAL=1 DRAPE_KERNEL_SOURCE_PATH="${DRAPE_KERNEL_SOURCE}")
+  add_dependencies(drape_sim drape_kernel_source)
+
+  drape_add_tests(drape_sim_gpu_tests
+    SOURCES tests/test_metal.cpp
+    DEPS drape_sim drape_garment drape_avatar drape_session
+    LABELS gpu)
+  target_include_directories(drape_sim_gpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernels)
+endif()
