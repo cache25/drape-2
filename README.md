@@ -12,6 +12,17 @@ cmake --preset dev && cmake --build --preset dev && ctest --preset dev
 
 Mac (Homebrew): `brew install cmake ninja eigen@3 git`
 
+## Developer setup (Mac, Apple Silicon)
+
+```
+brew install cmake ninja eigen@3 qtbase
+scripts/build-mac.sh            # build/mac (Debug); --release for build/mac-release
+scripts/test-mac.sh             # every test but perf; --release runs the perf gates
+```
+
+The build downloads metal-cpp, the prebuilt Filament release and a CC0 studio HDRI into the build folder (pinned and
+SHA-256 checked). Compiler temp files go to `build/tmp`. Without Qt everything except the app builds.
+
 Quick test loop: `ctest --preset dev -LE "slow|perf"`. Timing tests: `ctest --preset release -L perf`.
 
 ## Developer tools

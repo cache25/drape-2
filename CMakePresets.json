@@ -18,6 +18,40 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "mac",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/mac",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "cacheVariables": {
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "14.0",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_PREFIX_PATH": "/opt/homebrew/opt/qt;/opt/homebrew/opt/qtbase;/opt/homebrew/opt/eigen@3",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS_DEBUG": "-g -O2",
+        "CMAKE_C_FLAGS_DEBUG": "-g -O2"
+      }
+    },
+    {
+      "name": "mac-release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/mac-release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "cacheVariables": {
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "14.0",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_PREFIX_PATH": "/opt/homebrew/opt/qt;/opt/homebrew/opt/qtbase;/opt/homebrew/opt/eigen@3",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     }
   ],
   "buildPresets": [
@@ -28,6 +62,14 @@
     {
       "name": "release",
       "configurePreset": "release"
+    },
+    {
+      "name": "mac",
+      "configurePreset": "mac"
+    },
+    {
+      "name": "mac-release",
+      "configurePreset": "mac-release"
     }
   ],
   "testPresets": [
@@ -41,6 +83,20 @@
     {
       "name": "release",
       "configurePreset": "release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "mac",
+      "configurePreset": "mac",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "mac-release",
+      "configurePreset": "mac-release",
       "output": {
         "outputOnFailure": true
       }
