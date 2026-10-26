@@ -7,56 +7,13 @@
 #include "drape/core/test_fabrics.hpp"
 #include "drape/sim/cpu_solver.hpp"
 #include "drape/sim/drape_runner.hpp"
+#include "scripted_solver.hpp"
 #include "sim_test_utils.hpp"
 
 using namespace drape;
 using namespace drape::sim;
 using namespace drape::sim::testing;
 
-namespace {
-
-// Solver double whose stats come from a script indexed by the solver's current frame. Snapshots carry the
-// frame index in positions[0].x(), so restore() rewinds the frame counter.
-class ScriptedSolver final : public Solver {
- public:
-  std::function<SimStats(int frame, int restores)> script;
-  int frame = 0;
-  int restores = 0;
-  std::vector<int> stepSubsteps;
-  std::vector<int> restoredFrames;
-  std::vector<SimPhase> phases{SimPhase::Settling};
-
-  void build(const SimScene&) override {}
-  void updateFabric(const GarmentId&, const std::vector<FabricPhysical>&) override {}
-  void setPhase(const GarmentId&, SimPhase p) override { phases.push_back(p); }
-  void step(const StepInput& in) override {
-    ++frame;
-    stepSubsteps.push_back(in.substeps);
-  }
-  void readPositions(std::span<Vec3f>) const override {}
-  SimStats stats() const override { return script(frame, restores); }
-  Snapshot snapshot() const override {
-    Snapshot s;
-    s.positions = {Vec3f(static_cast<float>(frame), 0, 0)};
-    return s;
-  }
-  void restore(const Snapshot& s) override {
-    frame = static_cast<int>(s.positions[0].x());
-    restoredFrames.push_back(frame);
-    ++restores;
-  }
-  ParticleRange range(const GarmentId&) const override { return {0, 1}; }
-  std::size_t particleCount() const override { return 1; }
-};
-
-SimStats calm(double gap = 0.0, double rms = 0.0) {
-  SimStats s;
-  s.maxSeamGap = gap;
-  s.rmsSpeed = rms;
-  return s;
-}
-
-}  // namespace
 
 TEST(Runner, SettlesAfterStillFrames) {
   ScriptedSolver s;
@@ -145,28 +102,9 @@ TEST(Runner, StopsAtMaxSimSeconds) {
 }
 
 TEST(Runner, HangingSheetSettlesSymmetric) {
-  SimScene scene;
-  SimGarment g;
-  {
-    Pattern p;
-    p.pieces.push_back(garment::rectanglePiece("sheet", 0.5, 0.5));
-    g.id = "sheet";
-    g.mesh = garment::buildSimMesh(p, 0.01);
-    for (const auto& r : g.mesh.rest) g.initialPositions.push_back(Vec3d(r.x(), 0.5 + r.y(), 0));
-    g.pieceFabric = {testdata::testJersey()};
-  }
-  const SimMesh& m = g.mesh;
-  std::uint32_t tl = 0, tr = 0, bl = 0, br = 0;
-  for (std::uint32_t v = 0; v < m.rest.size(); ++v) {
-    const Vec2d r = m.rest[v];
-    if ((r - Vec2d(0, 0.5)).norm() < 1e-9) tl = v;
-    if ((r - Vec2d(0.5, 0.5)).norm() < 1e-9) tr = v;
-    if ((r - Vec2d(0, 0)).norm() < 1e-9) bl = v;
-    if ((r - Vec2d(0.5, 0)).norm() < 1e-9) br = v;
-  }
-  scene.pins.push_back({tl, g.initialPositions[tl]});
-  scene.pins.push_back({tr, g.initialPositions[tr]});
-  scene.garments.push_back(g);
+  const HangingSheet hs = hangingSheet();
+  const SimScene& scene = hs.scene;
+  const auto bl = hs.bottomLeft, br = hs.bottomRight;
   CpuSolver s;
   s.build(scene);
   DrapeOptions o;

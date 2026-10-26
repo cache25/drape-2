@@ -4,6 +4,7 @@
 #include <functional>
 #include <vector>
 
+#include "drape/core/test_fabrics.hpp"
 #include "drape/garment/shapes.hpp"
 #include "drape/garment/sim_mesh_builder.hpp"
 #include "drape/sim/solver.hpp"
@@ -46,6 +47,36 @@ inline std::vector<Vec3f> positions(const Solver& s) {
   std::vector<Vec3f> out(s.particleCount());
   s.readPositions(out);
   return out;
+}
+
+// A 0.5 x 0.5 m testJersey sheet (h = 1 cm) hanging in the XY plane from its two top corners.
+struct HangingSheet {
+  SimScene scene;
+  std::uint32_t bottomLeft = 0, bottomRight = 0;
+};
+
+inline HangingSheet hangingSheet() {
+  HangingSheet hs;
+  SimGarment g;
+  Pattern p;
+  p.pieces.push_back(garment::rectanglePiece("sheet", 0.5, 0.5));
+  g.id = "sheet";
+  g.mesh = garment::buildSimMesh(p, 0.01);
+  for (const auto& r : g.mesh.rest) g.initialPositions.push_back(Vec3d(r.x(), 0.5 + r.y(), 0));
+  g.pieceFabric = {testdata::testJersey()};
+  const SimMesh& m = g.mesh;
+  std::uint32_t tl = 0, tr = 0;
+  for (std::uint32_t v = 0; v < m.rest.size(); ++v) {
+    const Vec2d r = m.rest[v];
+    if ((r - Vec2d(0, 0.5)).norm() < 1e-9) tl = v;
+    if ((r - Vec2d(0.5, 0.5)).norm() < 1e-9) tr = v;
+    if ((r - Vec2d(0, 0)).norm() < 1e-9) hs.bottomLeft = v;
+    if ((r - Vec2d(0.5, 0)).norm() < 1e-9) hs.bottomRight = v;
+  }
+  hs.scene.pins.push_back({tl, g.initialPositions[tl]});
+  hs.scene.pins.push_back({tr, g.initialPositions[tr]});
+  hs.scene.garments.push_back(std::move(g));
+  return hs;
 }
 
 }  // namespace drape::sim::testing
