@@ -63,7 +63,7 @@ std::vector<short4> tangentQuats(const std::vector<Vec3f>& normals) {
   for (std::size_t i = 0; i < normals.size(); ++i) n[i] = {normals[i].x(), normals[i].y(), normals[i].z()};
   std::vector<short4> q(normals.size());
   if (normals.empty()) return q;
-  auto* so = geometry::SurfaceOrientation::Builder().vertexCount(n.size()).normals(n.data()).build();
+  auto* so = fl::geometry::SurfaceOrientation::Builder().vertexCount(n.size()).normals(n.data()).build();
   so->getQuats(q.data(), q.size());
   delete so;
   return q;
