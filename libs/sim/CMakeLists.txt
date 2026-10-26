@@ -3,10 +3,14 @@ drape_add_library(drape_sim
   PUBLIC_DEPS drape_core)
 
 drape_add_tests(drape_sim_tests
-  SOURCES tests/test_stretch.cpp tests/test_cpu_solver.cpp tests/test_bending.cpp tests/test_seams.cpp tests/test_body_collision.cpp tests/test_friction.cpp tests/test_cantilever.cpp tests/test_seam_hinge.cpp tests/test_drape_runner.cpp tests/test_tee_drape.cpp tests/test_sim_model.cpp tests/test_drape_session.cpp tests/test_solver_factory.cpp
+  SOURCES tests/test_stretch.cpp tests/test_cpu_solver.cpp tests/test_bending.cpp tests/test_seams.cpp tests/test_body_collision.cpp tests/test_friction.cpp tests/test_cantilever.cpp tests/test_seam_hinge.cpp tests/test_drape_runner.cpp tests/test_tee_drape.cpp tests/test_sim_model.cpp tests/test_drape_session.cpp tests/test_solver_factory.cpp tests/test_term_math.cpp
   DEPS drape_sim drape_garment drape_avatar drape_session)
 
 drape_add_tests(drape_sim_slow_tests
   SOURCES tests/test_tee_drape_slow.cpp
   DEPS drape_sim drape_garment drape_avatar drape_session
   LABELS slow)
+
+# GPU kernel headers (compiled as C++ here and as Metal Shading Language on Macs).
+target_include_directories(drape_sim PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernels)
+target_include_directories(drape_sim_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernels)
