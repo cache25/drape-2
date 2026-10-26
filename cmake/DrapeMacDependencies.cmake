@@ -40,10 +40,10 @@ set(DRAPE_MATC ${DRAPE_FILAMENT_DIR}/bin/matc)
 set(DRAPE_CMGEN ${DRAPE_FILAMENT_DIR}/bin/cmgen)
 add_library(drape_filament INTERFACE)
 target_include_directories(drape_filament SYSTEM INTERFACE ${DRAPE_FILAMENT_DIR}/include)
-foreach(lib filament backend filabridge filaflat utils geometry ibl-lite ktxreader image smol-v abseil zstd perfetto)
+foreach(lib filament backend bluegl bluevk filabridge filaflat utils geometry ibl-lite ktxreader image smol-v abseil zstd perfetto)
   target_link_libraries(drape_filament INTERFACE ${DRAPE_FILAMENT_DIR}/lib/arm64/lib${lib}.a)
 endforeach()
-target_link_libraries(drape_filament INTERFACE "-framework Metal" "-framework QuartzCore" "-framework Cocoa"
+target_link_libraries(drape_filament INTERFACE "-framework Metal" "-framework QuartzCore" "-framework Cocoa" "-framework OpenGL"
                       "-framework CoreVideo" "-framework IOKit")
 
 # Poly Haven studio_small_09 (CC0), 2K; turned into an IBL with cmgen by drape_render.
