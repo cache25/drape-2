@@ -17,8 +17,8 @@ class OrbitCamera {
   static constexpr double kMaxPitch = 1.5;
   static constexpr double kMinDistance = 0.2, kMaxDistance = 20.0;
 
-  // Centers on the box and backs off until its bounding sphere, plus 10%, fits both fields of view; resets the
-  // view to the front.
+  // Centers on the box and backs off until its front face, plus 10%, fits both fields of view; resets the view to
+  // the front.
   void frame(const Vec3d& boundsMin, const Vec3d& boundsMax, double verticalFovRad, double aspect);
   void orbit(double dxPixels, double dyPixels);
   // Moves the target in the view plane so the scene follows the cursor.

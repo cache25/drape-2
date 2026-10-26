@@ -13,10 +13,11 @@ Vec3d offsetDir(double yaw, double pitch) {
 
 void OrbitCamera::frame(const Vec3d& boundsMin, const Vec3d& boundsMax, double verticalFovRad, double aspect) {
   target = 0.5 * (boundsMin + boundsMax);
-  const double radius = 0.5 * (boundsMax - boundsMin).norm() * 1.1;
-  const double hfov = 2.0 * std::atan(std::tan(verticalFovRad / 2) * aspect);
-  const double fov = std::min(verticalFovRad, hfov);
-  distance = std::clamp(radius / std::sin(fov / 2), kMinDistance, kMaxDistance);
+  const Vec3d half = 0.5 * (boundsMax - boundsMin);
+  // Fit the box's front face (seen from +Z) with a 10% margin in both directions.
+  const double tanV = std::tan(verticalFovRad / 2), tanH = tanV * aspect;
+  const double fit = std::max(half.y() / tanV, half.x() / tanH) * 1.1;
+  distance = std::clamp(fit + half.z(), kMinDistance, kMaxDistance);
   yaw = 0;
   pitch = 0;
 }

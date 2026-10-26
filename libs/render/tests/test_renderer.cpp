@@ -82,6 +82,25 @@ TEST(Renderer, OffscreenTeeCoverage) {
   EXPECT_LE(c, 0.40);
 }
 
+// Upright: the tee sits on the torso, so its pixels' mean row is in the upper half of the image (rows top-first).
+TEST(Renderer, OffscreenIsUpright) {
+  Renderer r(assets());
+  loadTee(r);
+  const RgbaImage img = r.renderOffscreen(400, 500);
+  double rowSum = 0;
+  std::size_t count = 0;
+  for (std::uint32_t y = 0; y < img.height; ++y)
+    for (std::uint32_t x = 0; x < img.width; ++x) {
+      const std::uint8_t* p = &img.pixels[(static_cast<std::size_t>(y) * img.width + x) * 4];
+      if (isBlueTint(p[0], p[1], p[2])) {
+        rowSum += y;
+        ++count;
+      }
+    }
+  ASSERT_GT(count, 0u);
+  EXPECT_LT(rowSum / static_cast<double>(count), 0.5 * img.height);
+}
+
 TEST(Renderer, OffscreenRendersAtTwoSizes) {
   Renderer r(assets());
   loadTee(r);

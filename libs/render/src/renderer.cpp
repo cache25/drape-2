@@ -339,11 +339,8 @@ RgbaImage Renderer::renderOffscreen(std::uint32_t width, std::uint32_t height) {
   s.engine->destroy(sc);
   s.engine->flushAndWait();
   if (!done) throw std::runtime_error("filament: offscreen frame was never rendered");
-  // Filament reads bottom row first; flip to top-first.
-  img.pixels.resize(raw.size());
-  const std::size_t row = static_cast<std::size_t>(width) * 4;
-  for (std::uint32_t y = 0; y < height; ++y)
-    std::memcpy(img.pixels.data() + y * row, raw.data() + (height - 1 - y) * row, row);
+  // Filament's Metal backend returns rows top-first already (checked by Renderer.OffscreenIsUpright).
+  img.pixels = std::move(raw);
   s.view->setViewport({0, 0, s.width, s.height});
   return img;
 }

@@ -87,6 +87,19 @@ TEST(OrbitCamera, FrameContainsBox) {
   }
 }
 
+// The body fills the view: a standing figure's height takes at least 80% of a portrait viewport.
+TEST(OrbitCamera, FrameIsTight) {
+  const Vec3d lo(-0.9, 0.0, -0.3), hi(0.9, 1.8, 0.3);
+  const double vfov = 40.0 * kPi / 180.0, aspect = 0.8;
+  OrbitCamera cam;
+  cam.frame(lo, hi, vfov, aspect);
+  // Projected half-height of the box's front face, as a fraction of the view's half-height.
+  const double depth = cam.distance - hi.z() + cam.target.z();
+  const double fraction = (0.5 * (hi.y() - lo.y()) / depth) / std::tan(vfov / 2);
+  EXPECT_GE(fraction, 0.8);
+  EXPECT_LE(fraction, 1.0);
+}
+
 TEST(OrbitCamera, PitchClamped) {
   OrbitCamera cam;
   cam.orbit(0, 1e6);
