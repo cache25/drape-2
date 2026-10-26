@@ -63,6 +63,32 @@ struct StepParams {
   uint n, nStretch, nHinge, nSeam, nBlocks, withDerivatives, maxCgIterations;
 };
 
+// Per-particle constants.
+struct GpuParticle {
+  float mass;
+  uint fabric, garment, pinned;
+};
+
+// Per-particle body contact state (spec 5.5): the substep's tangent plane, the normal force from the last solve and
+// the friction multiplier the energy uses.
+struct GpuContact {
+  float4 normal;  // xyz: plane normal; w: offset = radius - phi(xStart)
+  float force, frictionLambda;
+  uint nearBody, active;
+};
+
+// Fixed per call site of the two-level reduction: how many input floats, and which CgScalars field receives the sum.
+struct ReduceSpec {
+  uint count, selector;
+  uint pad[2];
+};
+constant_or_static uint kReduceRz = 0;     // rz = sum
+constant_or_static uint kReduceR0 = 1;     // rr = sum; r0 = sqrt(sum); converged = (r0 == 0); iteration = 0
+constant_or_static uint kReducePAp = 2;    // pAp = sum
+constant_or_static uint kReduceRr = 3;     // rr = sum
+constant_or_static uint kReduceRzNew = 4;  // beta = sum (the new rz, consumed by CgBeta)
+constant_or_static uint kReduceBlock = 256;
+
 inline Mat3 loadBlock(Block3 b) { return Mat3{xyz(b.c0), xyz(b.c1), xyz(b.c2)}; }
 inline Block3 storeBlock(Mat3 m) { return Block3{make4(m.c0, 0.0f), make4(m.c1, 0.0f), make4(m.c2, 0.0f)}; }
 
