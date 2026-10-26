@@ -37,5 +37,7 @@ TEST(TeeBenchmark, GpuFasterThanCpuAtStandard) {
     }
   }
   const int standard = static_cast<int>(SimQuality::Standard);
-  EXPECT_LT(wall[{standard, static_cast<int>(SolverBackend::Metal)}], wall[{standard, static_cast<int>(SolverBackend::Cpu)}]);
+  const double metalWall = wall[std::make_pair(standard, static_cast<int>(SolverBackend::Metal))];
+  const double cpuWall = wall[std::make_pair(standard, static_cast<int>(SolverBackend::Cpu))];
+  EXPECT_LT(metalWall, cpuWall);
 }
