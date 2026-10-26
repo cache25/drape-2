@@ -4,21 +4,15 @@
 #include <cstdio>
 #include <exception>
 #include <map>
-#include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "drape/avatar/collision_bake.hpp"
 #include "drape/avatar/mannequin.hpp"
-#include "drape/core/test_fabrics.hpp"
-#include "drape/garment/placement.hpp"
-#include "drape/garment/sim_mesh_builder.hpp"
 #include "drape/garment/spec_table.hpp"
-#include "drape/garment/test_tee.hpp"
 #include "drape/sim/cpu_solver.hpp"
+#include "drape/session/tee_scene.hpp"
 #include "drape/sim/drape_runner.hpp"
-#include "drape/sim/scene_builder.hpp"
 #include "obj_writer.hpp"
 
 namespace {
@@ -75,20 +69,10 @@ int main(int argc, char** argv) {
     return 2;
   }
   try {
-    const avatar::Mannequin body = avatar::loadMannequin(args.body);
-    const CollisionField field = avatar::bakeCollisionField(std::span<const TriangleMesh>(&body.mesh, 1));
-    const garment::TestTeeGenerator mens;
-    const garment::WomensTestTeeGenerator womens;
-    const garment::GarmentGenerator& generator =
-        args.body == avatar::BodyType::Female ? static_cast<const garment::GarmentGenerator&>(womens) : mens;
-    const Pattern pattern = generator.generate(garment::resolveSpec(generator.specTable(), args.size));
-    SimMesh mesh = garment::buildSimMesh(pattern, garment::particleDistance(args.quality));
-    auto placed = garment::placePattern(pattern, mesh, body.regions);
-    const std::map<std::string, FabricPhysical> fabrics{{"body", testdata::testJersey()}, {"rib", testdata::testRib()}};
-
-    sim::SimScene scene;
-    scene.body = &field;
-    scene.garments.push_back(sim::makeSimGarment("tee", pattern, mesh, std::move(placed), fabrics));
+    const auto ts = session::makeTeeScene(args.body, args.quality, args.size);
+    const avatar::Mannequin& body = ts->mannequin;
+    const SimMesh& mesh = ts->mesh;
+    const sim::SimScene& scene = ts->scene;
     sim::CpuSolver solver;
     solver.build(scene);
     sim::DrapeOptions options;

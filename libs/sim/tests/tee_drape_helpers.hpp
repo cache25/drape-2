@@ -5,35 +5,25 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
-#include <span>
 #include <string>
-#include <utility>
 
-#include "drape/avatar/collision_bake.hpp"
 #include "drape/avatar/mannequin.hpp"
 #include "drape/core/test_fabrics.hpp"
-#include "drape/garment/placement.hpp"
 #include "drape/garment/sim_mesh_builder.hpp"
-#include "drape/garment/test_tee.hpp"
+#include "drape/garment/spec_table.hpp"
 #include "drape/sim/cpu_solver.hpp"
 #include "drape/sim/drape_runner.hpp"
 #include "drape/sim/scene_builder.hpp"
+#include "drape/session/tee_scene.hpp"
 #include "sim_test_utils.hpp"
 
 namespace drape::sim::testing {
 
+using session::teeGenerator;
+
 inline const std::map<std::string, FabricPhysical>& teeFabrics() {
   static const std::map<std::string, FabricPhysical> f{{"body", testdata::testJersey()}, {"rib", testdata::testRib()}};
   return f;
-}
-
-// The tee each body wears: the men's test tee on the male, the women's cut on the female. The men's shoulders
-// land 6 cm past the female mannequin's and drop its sleeves onto her 45 degree arms, where they slide off.
-inline const garment::GarmentGenerator& teeGenerator(avatar::BodyType body) {
-  static const garment::TestTeeGenerator mens;
-  static const garment::WomensTestTeeGenerator womens;
-  if (body == avatar::BodyType::Female) return womens;
-  return mens;
 }
 
 inline Pattern teePattern(const std::string& size, avatar::BodyType body = avatar::BodyType::Male) {
@@ -41,30 +31,12 @@ inline Pattern teePattern(const std::string& size, avatar::BodyType body = avata
   return g.generate(garment::resolveSpec(g.specTable(), size));
 }
 
-struct MannequinAndField {
-  avatar::Mannequin mannequin;
-  CollisionField field;
-};
-
-// Loads and bakes each mannequin once per test binary (the bake takes seconds).
-inline const MannequinAndField& mannequinAndField(avatar::BodyType body) {
-  static std::map<avatar::BodyType, MannequinAndField> cache;
-  auto it = cache.find(body);
-  if (it == cache.end()) {
-    MannequinAndField m;
-    m.mannequin = avatar::loadMannequin(body);
-    m.field = avatar::bakeCollisionField(std::span<const TriangleMesh>(&m.mannequin.mesh, 1));
-    it = cache.emplace(body, std::move(m)).first;
-  }
-  return it->second;
-}
-
 // The Task 16 pipeline on a mannequin: generate the tee, mesh, place, build and drape to rest. The hem is the
 // front and back vertices on the pattern's y = 0 edge; its mean height must lie within 3 cm of the body-aware
 // target below.
 inline void expectTeeDrapes(const std::string& size, SimQuality q, avatar::BodyType body = avatar::BodyType::Male) {
-  const MannequinAndField& mf = mannequinAndField(body);
-  const auto& lm = mf.mannequin.landmarks.points;
+  const auto ts = session::makeTeeScene(body, q, size);
+  const auto& lm = ts->mannequin.landmarks.points;
   // L is the body length of the tee this body wears.
   const double bodyLength = garment::resolveSpec(teeGenerator(body).specTable(), size).at("body_length");
   // Hem target = mean HPS height - body length + take-up. The front does not fall vertically from the HPS: it
@@ -76,12 +48,9 @@ inline void expectTeeDrapes(const std::string& size, SimQuality q, avatar::BodyT
   const double takeUp = (chest - hps).norm() - (hps.y() - chest.y());
   const double hemTarget = 0.5 * (lm.at("hps_left").y() + lm.at("hps_right").y()) - bodyLength + takeUp;
 
-  const Pattern pattern = teePattern(size, body);
-  SimMesh mesh = garment::buildSimMesh(pattern, garment::particleDistance(q));
-  auto placed = garment::placePattern(pattern, mesh, mf.mannequin.regions);
-  SimScene scene;
-  scene.body = &mf.field;
-  scene.garments.push_back(makeSimGarment("tee", pattern, mesh, placed, teeFabrics()));
+  const Pattern& pattern = ts->pattern;
+  const SimMesh& mesh = ts->mesh;
+  const SimScene& scene = ts->scene;
   CpuSolver solver;
   solver.build(scene);
   DrapeOptions o;

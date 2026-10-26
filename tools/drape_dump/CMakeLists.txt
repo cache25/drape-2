@@ -5,7 +5,7 @@ target_link_libraries(drape_obj_writer PUBLIC drape_core)
 
 add_executable(drape_dump main.cpp)
 target_compile_options(drape_dump PRIVATE ${DRAPE_WARNINGS})
-target_link_libraries(drape_dump PRIVATE drape_obj_writer drape_sim drape_garment drape_avatar)
+target_link_libraries(drape_dump PRIVATE drape_obj_writer drape_session)
 
 add_executable(drape_obj_writer_tests test_obj_writer.cpp)
 target_compile_options(drape_obj_writer_tests PRIVATE ${DRAPE_WARNINGS})
