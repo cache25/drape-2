@@ -7,6 +7,7 @@
 #include "drape/core/test_fabrics.hpp"
 #include "drape/sim/cpu_solver.hpp"
 #include "drape/sim/drape_runner.hpp"
+#include "backends.hpp"
 #include "scripted_solver.hpp"
 #include "sim_test_utils.hpp"
 
@@ -101,11 +102,15 @@ TEST(Runner, StopsAtMaxSimSeconds) {
   EXPECT_NEAR(r.simulatedSeconds, 20.0, 1.0 / 60.0);
 }
 
-TEST(Runner, HangingSheetSettlesSymmetric) {
+using PhysicsStability = BackendTest;
+DRAPE_INSTANTIATE_BACKENDS(PhysicsStability);
+
+TEST_P(PhysicsStability, HangingSheetSettlesSymmetric) {
   const HangingSheet hs = hangingSheet();
   const SimScene& scene = hs.scene;
   const auto bl = hs.bottomLeft, br = hs.bottomRight;
-  CpuSolver s;
+  const auto sp = make();
+  Solver& s = *sp;
   s.build(scene);
   DrapeOptions o;
   o.maxSimSeconds = 15.0;

@@ -7,6 +7,7 @@
 #include "drape/avatar/primitives.hpp"
 #include "drape/core/test_fabrics.hpp"
 #include "drape/sim/cpu_solver.hpp"
+#include "backends.hpp"
 #include "sim_test_utils.hpp"
 
 using namespace drape;
@@ -39,11 +40,14 @@ std::uint32_t nearestTo(const SimMesh& m, const Vec2d& p) {
 
 }  // namespace
 
-TEST(BodyCollision, ParticlesRestOnSphere) {
+using PhysicsContact = BackendTest;
+
+TEST_P(PhysicsContact, ParticlesRestOnSphere) {
   SimScene scene;
   scene.body = &sphereField();
   scene.garments.push_back(centredSheet(0.004, 0.004, 0.15 + 0.05));
-  CpuSolver s;
+  const auto sp = make();
+  Solver& s = *sp;
   s.build(scene);
   for (int f = 0; f < 120; ++f) s.step({1.0 / 60.0, 1, 2});
   for (const auto& p : positions(s)) {
@@ -67,11 +71,12 @@ TEST(BodyCollision, PressedPatchStaysOnSurface) {
 }
 
 // The drape's shape after 5 s; DrapedSheetComesToRest checks that it then comes to rest.
-TEST(BodyCollision, SheetDrapesOverSphere) {
+TEST_P(PhysicsContact, SheetDrapesOverSphere) {
   SimScene scene;
   scene.body = &sphereField();
   scene.garments.push_back(centredSheet(0.6, 0.01, 0.15 + 0.05));
-  CpuSolver s;
+  const auto sp = make();
+  Solver& s = *sp;
   s.build(scene);
   for (int f = 0; f < 300; ++f) s.step({1.0 / 60.0, 1, 2});
   const auto st = s.stats();
@@ -98,11 +103,12 @@ TEST(BodyCollision, FastPatchCannotTunnelPastTheBand) {
 
 // A draped sheet must come to rest, not keep simmering: 0.5 mm/s RMS held for 1 s within 20 s simulated is a
 // 4x margin under the spec's settle threshold (2 mm/s, Section 5.7).
-TEST(BodyCollision, DrapedSheetComesToRest) {
+TEST_P(PhysicsContact, DrapedSheetComesToRest) {
   SimScene scene;
   scene.body = &sphereField();
   scene.garments.push_back(centredSheet(0.6, 0.01, 0.15 + 0.05));
-  CpuSolver s;
+  const auto sp = make();
+  Solver& s = *sp;
   s.build(scene);
   int still = 0, frame = 0;
   for (; frame < 1200 && still < 60; ++frame) {
@@ -145,7 +151,7 @@ TEST(BodyCollision, StartsInsideIsResolved) {
 namespace {
 
 // Displacement along the uphill direction of a 20-degree slope after 120 frames, for a given friction.
-double slideOnSlope(double friction) {
+double slideOnSlope(SolverBackend backend, double friction) {
   const double a = 20.0 * kPi / 180.0;
   const Mat3d rot = Eigen::AngleAxisd(a, Vec3d(0, 0, 1)).toRotationMatrix();
   const Vec3d up = rot * Vec3d(0, 1, 0);
@@ -163,7 +169,8 @@ double slideOnSlope(double friction) {
   SimScene scene;
   scene.body = &field;
   scene.garments.push_back(g);
-  CpuSolver s;
+  const auto sp = makeSolver(backend);
+  Solver& s = *sp;
   s.build(scene);
   auto centroid = [&] {
     Vec3d c0 = Vec3d::Zero();
@@ -177,6 +184,8 @@ double slideOnSlope(double friction) {
 
 }  // namespace
 
-TEST(BodyCollision, FrictionHoldsOnGentleSlope) { EXPECT_LT(std::abs(slideOnSlope(0.5)), 0.002); }
+TEST_P(PhysicsContact, FrictionHoldsOnGentleSlope) { EXPECT_LT(std::abs(slideOnSlope(GetParam(), 0.5)), 0.002); }
 
-TEST(BodyCollision, SlidesWhenSlippery) { EXPECT_LT(slideOnSlope(0.2), -0.05); }
+TEST_P(PhysicsContact, SlidesWhenSlippery) { EXPECT_LT(slideOnSlope(GetParam(), 0.2), -0.05); }
+
+DRAPE_INSTANTIATE_BACKENDS(PhysicsContact);

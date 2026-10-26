@@ -5,6 +5,7 @@
 
 #include "drape/core/test_fabrics.hpp"
 #include "drape/sim/cpu_solver.hpp"
+#include "backends.hpp"
 #include "sim_test_utils.hpp"
 
 using namespace drape;
@@ -62,6 +63,9 @@ double measuredStrain(const Solver& s, const SimMesh& m) {
 
 }  // namespace
 
+using PhysicsStretch = BackendTest;
+DRAPE_INSTANTIATE_BACKENDS(PhysicsStretch);
+
 TEST(CpuSolver, SubstepsForQuality) {
   EXPECT_EQ(substepsFor(SimQuality::Draft), 1);
   EXPECT_EQ(substepsFor(SimQuality::Standard), 1);
@@ -110,17 +114,19 @@ TEST(CpuSolver, PinsHold) {
   EXPECT_LT((positions(s)[0].cast<double>() - scene.pins[0].position).norm(), 1e-7);
 }
 
-TEST(CpuSolver, StripStretchWarp) {
+TEST_P(PhysicsStretch, StripStretchWarp) {
   auto scene = stripScene({1, 0}, withDamping(testdata::testJersey(), 1.0));
-  CpuSolver s;
+  const auto sp = make();
+  Solver& s = *sp;
   s.build(scene);
   ASSERT_GT(runUntilStill(s, {1.0 / 60.0, 1, 2}, 1e-5, 60, 30.0), 0);
   EXPECT_NEAR(measuredStrain(s, scene.garments[0].mesh), 0.025, 0.05 * 0.025);
 }
 
-TEST(CpuSolver, StripStretchWeft) {
+TEST_P(PhysicsStretch, StripStretchWeft) {
   auto scene = stripScene({0, 1}, withDamping(testdata::testJersey(), 1.0));
-  CpuSolver s;
+  const auto sp = make();
+  Solver& s = *sp;
   s.build(scene);
   ASSERT_GT(runUntilStill(s, {1.0 / 60.0, 1, 2}, 1e-5, 60, 30.0), 0);
   EXPECT_NEAR(measuredStrain(s, scene.garments[0].mesh), 0.05, 0.05 * 0.05);

@@ -5,6 +5,7 @@
 
 #include "drape/core/test_fabrics.hpp"
 #include "drape/sim/cpu_solver.hpp"
+#include "backends.hpp"
 #include "sim_test_utils.hpp"
 
 using namespace drape;
@@ -14,7 +15,7 @@ using namespace drape::sim::testing;
 namespace {
 
 // Peirce cantilever (spec 12.2 #2): returns |G - B| / B.
-double cantileverError(const FabricPhysical& f, const Vec2d& grain, double B) {
+double cantileverError(SolverBackend backend, const FabricPhysical& f, const Vec2d& grain, double B) {
   const double W = f.weight * kGravity;
   const double l = 2.0 * std::cbrt(B / W);
   const double length = l + 0.01;
@@ -42,7 +43,8 @@ double cantileverError(const FabricPhysical& f, const Vec2d& grain, double B) {
   const double xClamp = clampSum / clampCount;
   const auto tipVerts = verticesWhere(m, [&](std::uint32_t i) { return m.rest[i].x() >= length - 1e-9; });
 
-  CpuSolver s;
+  const auto sp = makeSolver(backend);
+  Solver& s = *sp;
   s.build(scene);
   EXPECT_GT(runUntilStill(s, {1.0 / 60.0, 1, 2}, 2e-4, 60, 10.0), 0);
   const auto x = positions(s);
@@ -64,6 +66,9 @@ double cantileverError(const FabricPhysical& f, const Vec2d& grain, double B) {
 
 }  // namespace
 
-TEST(Bending, CantileverIsotropic) { EXPECT_LE(cantileverError(testdata::testStiff(), {1, 0}, 100e-6), 0.10); }
-TEST(Bending, CantileverAnisoWarp) { EXPECT_LE(cantileverError(testdata::testAniso(), {1, 0}, 100e-6), 0.10); }
-TEST(Bending, CantileverAnisoWeft) { EXPECT_LE(cantileverError(testdata::testAniso(), {0, 1}, 40e-6), 0.10); }
+using PhysicsCantilever = BackendTest;
+DRAPE_INSTANTIATE_BACKENDS(PhysicsCantilever);
+
+TEST_P(PhysicsCantilever, CantileverIsotropic) { EXPECT_LE(cantileverError(GetParam(), testdata::testStiff(), {1, 0}, 100e-6), 0.10); }
+TEST_P(PhysicsCantilever, CantileverAnisoWarp) { EXPECT_LE(cantileverError(GetParam(), testdata::testAniso(), {1, 0}, 100e-6), 0.10); }
+TEST_P(PhysicsCantilever, CantileverAnisoWeft) { EXPECT_LE(cantileverError(GetParam(), testdata::testAniso(), {0, 1}, 40e-6), 0.10); }
