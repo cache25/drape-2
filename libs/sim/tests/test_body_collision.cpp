@@ -9,27 +9,13 @@
 #include "drape/sim/cpu_solver.hpp"
 #include "backends.hpp"
 #include "sim_test_utils.hpp"
+#include "sphere_scene.hpp"
 
 using namespace drape;
 using namespace drape::sim;
 using namespace drape::sim::testing;
 
 namespace {
-
-const CollisionField& sphereField() {
-  static const CollisionField f = [] {
-    std::vector<TriangleMesh> c{avatar::icosphere({0, 0, 0}, 0.15, 4)};
-    return avatar::bakeCollisionField(c);
-  }();
-  return f;
-}
-
-constexpr double kContact = 0.003 + 0.0006 / 2;  // collision offset + half testJersey thickness
-
-SimGarment centredSheet(double size, double h, double height) {
-  return flatGarment("sheet", garment::rectanglePiece("sheet", size, size), h, testdata::testJersey(),
-                     {-size / 2, height, -size / 2});
-}
 
 std::uint32_t nearestTo(const SimMesh& m, const Vec2d& p) {
   std::uint32_t best = 0;

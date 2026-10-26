@@ -1,7 +1,7 @@
 # Drape — Mac App Shell (Phase B) Design
 
 **Date:** 2026-10-25
-**Status:** Design approved in conversation 2026-10-25; written spec awaiting Ian's review
+**Status:** Approved 2026-10-25; amended during execution (parity scenes and long-run tolerance, Section 7.2, 2026-10-26)
 **Amends:** `2026-10-01-drape-milestone-1-design.md` Sections 3.4, 13.1 and 17 (amendments listed in Section 10)
 **Builds on:** Phase A (foundations) and Phase A2 (mannequins), `main` at `af4e333`
 
@@ -137,8 +137,8 @@ Apple GPUs have no 64-bit floating point. The rules:
 
 - **Physics tests 1, 2 and 4 on both solvers** (spec 12.2): the strip stretch tests, the cantilever tests, and the stability tests (hanging sheet, sheet on a sphere, rests on the body, friction slope) are parameterized over the backend and run on `CpuSolver` and `MetalSolver`. Test 3 (Cusick drape) needs the fabric presets and stays in Phase D.
 - **Parity (spec 12.2 test 5):**
-  - Short runs, ≤ 60 frames — hanging sheet, sheet dropped on a sphere, and the tee's first 60 frames on the male mannequin: maximum per-particle difference < 1 mm.
-  - Long runs — the tee draped to rest on the male and on the female: hem height and center of mass agree within 2 mm, and both settle.
+  - Short runs, ≤ 60 frames — hanging sheet, a small patch dropped on the sphere, and the full tee continuing 60 frames from its CPU-settled state on the male mannequin: maximum per-particle difference < 1 mm. *(Amended during execution, 2026-10-26: the sheet dropped on the sphere and the tee's first 60 frames were dropped as short-run scenes because they are chaotic at the 1 mm scale even CPU vs CPU — a 1 nm change to the start moves the CPU's own result by ~10 cm and ~1.4 cm respectively.)*
+  - Long runs — the tee draped to rest on the male and on the female: both settle, and hem height and center of mass agree within 2 mm **or within the CPU's own spread, whichever is larger** — the largest difference from the unperturbed CPU result over three CPU runs whose start moves by up to 1 nm. *(Ian's decision, 2026-10-26: the female tee's settled hem varies by up to 6.7 mm CPU vs CPU, so a fixed 2 mm check cannot tell a correct GPU solver from a wrong one.)*
 - **Determinism:** two `MetalSolver` runs of the same scenario, and a snapshot/restore replay, are bit-identical.
 - **Tee on the GPU:** the existing tee drape checks (settled, seam gap, penetration) pass with `MetalSolver` on both bodies.
 - **Render smoke test:** Filament renders the settled tee on the male offscreen at 800×1000; the image is not blank, and the garment's blue-tinted pixels cover between 5% and 40% of the frame.

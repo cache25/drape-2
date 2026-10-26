@@ -14,6 +14,7 @@
 #include "drape/sim/cpu_solver.hpp"
 #include "drape/sim/drape_runner.hpp"
 #include "drape/sim/scene_builder.hpp"
+#include "drape/sim/solver_factory.hpp"
 #include "drape/session/tee_scene.hpp"
 #include "sim_test_utils.hpp"
 
@@ -34,7 +35,8 @@ inline Pattern teePattern(const std::string& size, avatar::BodyType body = avata
 // The Task 16 pipeline on a mannequin: generate the tee, mesh, place, build and drape to rest. The hem is the
 // front and back vertices on the pattern's y = 0 edge; its mean height must lie within 3 cm of the body-aware
 // target below.
-inline void expectTeeDrapes(const std::string& size, SimQuality q, avatar::BodyType body = avatar::BodyType::Male) {
+inline void expectTeeDrapes(const std::string& size, SimQuality q, avatar::BodyType body = avatar::BodyType::Male,
+                            SolverBackend backend = SolverBackend::Cpu) {
   const auto ts = session::makeTeeScene(body, q, size);
   const auto& lm = ts->mannequin.landmarks.points;
   // L is the body length of the tee this body wears.
@@ -51,7 +53,8 @@ inline void expectTeeDrapes(const std::string& size, SimQuality q, avatar::BodyT
   const Pattern& pattern = ts->pattern;
   const SimMesh& mesh = ts->mesh;
   const SimScene& scene = ts->scene;
-  CpuSolver solver;
+  const auto solverPtr = makeSolver(backend);
+  Solver& solver = *solverPtr;
   solver.build(scene);
   DrapeOptions o;
   o.substeps = substepsFor(q);
@@ -70,7 +73,7 @@ inline void expectTeeDrapes(const std::string& size, SimQuality q, avatar::BodyT
   }
   ASSERT_GT(hemCount, 0);
   hem /= hemCount;
-  const std::string label = size + " " + std::string(avatar::bodyName(body));
+  const std::string label = size + " " + std::string(avatar::bodyName(body)) + " " + std::string(backendName(backend));
   std::printf("tee %s q%d: settled=%d failed=%d t=%.2fs assembly=%.2fs retries=%d seamGap=%.2fmm pen=%.2fmm "
               "hem=%.3fm target=%.3fm hemErr=%+.1fmm particles=%zu\n",
               label.c_str(), static_cast<int>(q), r.settled, r.failed, r.simulatedSeconds, r.assemblySeconds,

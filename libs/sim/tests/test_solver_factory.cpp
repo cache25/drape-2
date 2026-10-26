@@ -31,3 +31,10 @@ TEST(SolverFactory, UnavailableThrowsNamingBackend) {
   }
 }
 #endif
+
+TEST(SolverFactory, GpuEmulatedAvailable) {
+  ASSERT_TRUE(isAvailable(SolverBackend::GpuEmulated));
+  const auto s = makeSolver(SolverBackend::GpuEmulated);
+  ASSERT_NE(s, nullptr);
+  EXPECT_EQ(s->particleCount(), 0u);
+}

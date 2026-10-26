@@ -1,3 +1,4 @@
+#include "backends.hpp"
 #include "tee_drape_helpers.hpp"
 
 using namespace drape;
@@ -13,3 +14,14 @@ TEST(TeeDrapeSlow, AllSizesDraftFemale) {
 }
 
 TEST(TeeDrapeSlow, StandardOnMaleMannequin) { expectTeeDrapes("M", SimQuality::Standard, avatar::BodyType::Male); }
+
+// The tee drape checks on every GPU backend this machine has (spec Phase B 7.2).
+TEST(TeeDrape, GpuMaleM) {
+  if (gpuBackends().empty()) GTEST_SKIP() << "no GPU backend available";
+  for (auto b : gpuBackends()) expectTeeDrapes("M", SimQuality::Draft, avatar::BodyType::Male, b);
+}
+
+TEST(TeeDrape, GpuFemaleM) {
+  if (gpuBackends().empty()) GTEST_SKIP() << "no GPU backend available";
+  for (auto b : gpuBackends()) expectTeeDrapes("M", SimQuality::Draft, avatar::BodyType::Female, b);
+}
