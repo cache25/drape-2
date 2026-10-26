@@ -1,0 +1,19 @@
+// Garment fabric: Filament's cloth model, two-sided, inside faces darkened by a fixed amount (Phase B spec 4.2).
+material {
+    name : cloth,
+    shadingModel : cloth,
+    doubleSided : true,
+    parameters : [
+        { type : float3, name : baseColor },
+        { type : float3, name : sheenColor }
+    ],
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        float inside = gl_FrontFacing ? 1.0 : 0.6;
+        material.baseColor.rgb = materialParams.baseColor * inside;
+        material.sheenColor = materialParams.sheenColor;
+    }
+}

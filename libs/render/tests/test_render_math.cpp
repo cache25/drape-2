@@ -3,6 +3,10 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -118,4 +122,16 @@ TEST(ImageMetrics, Coverage) {
   }
   EXPECT_DOUBLE_EQ(coverage(rgba, 10, 10, isBlueTint), 0.25);
   EXPECT_FALSE(isBlueTint(235, 232, 227));  // the mannequin's off-white
+}
+
+TEST(ImageMetrics, WritePngWritesASignedFile) {
+  const std::vector<std::uint8_t> rgba{255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255};
+  const auto path = std::filesystem::temp_directory_path() / "drape_write_png_test.png";
+  writePng(path, rgba, 2, 2);
+  std::ifstream in(path, std::ios::binary);
+  char sig[8] = {};
+  in.read(sig, 8);
+  EXPECT_EQ(std::string(sig + 1, 3), "PNG");
+  std::filesystem::remove(path);
+  EXPECT_THROW(writePng("/nonexistent-dir/x.png", rgba, 2, 2), std::runtime_error);
 }

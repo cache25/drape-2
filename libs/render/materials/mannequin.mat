@@ -1,0 +1,15 @@
+// The display mannequin: white with a soft satin finish (Phase A2 spec 3).
+material {
+    name : mannequin,
+    shadingModel : lit,
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        material.baseColor.rgb = vec3(0.92, 0.91, 0.89);
+        material.roughness = 0.45;
+        material.clearCoat = 0.3;
+        material.clearCoatRoughness = 0.4;
+    }
+}
