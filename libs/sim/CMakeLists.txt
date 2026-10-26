@@ -41,4 +41,9 @@ if(APPLE)
     DEPS drape_sim drape_garment drape_avatar drape_session
     LABELS gpu)
   target_include_directories(drape_sim_gpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernels)
+
+  drape_add_tests(drape_sim_perf_tests
+    SOURCES tests/test_tee_benchmark.cpp
+    DEPS drape_sim drape_session
+    LABELS perf)
 endif()
