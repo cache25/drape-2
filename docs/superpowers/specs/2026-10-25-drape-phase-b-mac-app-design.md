@@ -180,3 +180,21 @@ The hoodie and outfit targets in spec 14 apply once those garments exist (Phase 
 - **13.1 Toolchain:** "Qt comes from the official Qt installer (latest Qt 6 LTS)" becomes "Qt comes from Homebrew (`qt`, 6.12) during development; the shipping build may move to the official LTS"; Filament is pinned to v1.78.1.
 - **17 Implementation phases:** row B adds "`DrapeSession` frame-by-frame runner; app toolbar (Simulate, Reset, Quality, Body, Solver)".
 - **Status line:** adds "Phase B Mac app shell (Sections 3.4, 13.1, 17)".
+
+## 11. As built (2026-10-27)
+
+Measured on Ian's MacBook (Apple M1, 8 GB, macOS 26), building on the external drive (`/Volumes/Ian 2/Dev/drape`), Qt 6.12.0 from aqtinstall, at commit `066304b`.
+
+**Tee benchmark** (`ctest --preset mac-release -L perf`; the tee draped to rest on the male, release build):
+
+| Quality | Particles | CPU wall | Metal wall | Metal speedup | CPU frames / sim s | Metal frames / sim s |
+|---|---|---|---|---|---|---|
+| Draft | 2,647 | 10.00 s | 13.13 s | 0.76× | 418 / 6.97 s | 507 / 8.45 s |
+| Standard | 10,342 | 38.59 s | 19.21 s | 2.01× | 397 / 6.62 s | 375 / 6.25 s |
+| Fine | 40,046 | 397.50 s | 107.02 s | 3.71× | 480 / 8.00 s | 351 / 5.85 s |
+
+All six runs settled. The 7.3 gate (Metal faster than CPU at Standard) passes. At Draft the GPU's per-dispatch overhead outweighs the work; the speedup grows with particle count. CG iteration counts are not yet exposed by `Solver` and were not recorded (Section 9); the parity tests bound the result instead.
+
+**App self-test** (`Drape --selftest`, debug build, Standard, male, Metal): settled after 6.25 s simulated; `tee_coverage` 0.039 (gate 0.025–0.20, see `scripts/test-mac.sh`); `fps_asleep` 82.5–120 (gate ≥ 59.5; the display runs at 120 Hz). `launch_ms` measured 4,054, 10,389, 11,852 and 17,108 against the 3,000 gate; an earlier build on the other external volume measured 2,017. Sampling shows the time inside the dynamic loader and `QApplication`'s platform-plugin load, paging Qt and Filament code from the external drive, before any Drape code runs. At the time the system drive had 0.1–0.5 GB free, swap was 2.3 GB and free RAM about 70 MB. **The launch gate is open until it is re-measured with free space on the system drive.**
+
+**Test totals:** Mac `ctest --preset mac -LE perf` 257/257 (at `687693b`), then the 35 tests touched by the review fixes at `066304b`; Mac perf 3/3; Linux `ctest --preset dev -LE perf` 238/238 at `066304b`.
