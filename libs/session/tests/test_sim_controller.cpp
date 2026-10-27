@@ -59,6 +59,39 @@ class AlwaysNonFinite final : public sim::Solver {
   sim::CpuSolver inner_;
 };
 
+// A real CPU solver whose build or step throws, standing in for a GPU that fails to allocate or faults mid-drape.
+class Faulty final : public sim::Solver {
+ public:
+  Faulty(bool failBuild, int failAfterSteps) : failBuild_(failBuild), stepsLeft_(failAfterSteps) {}
+  void build(const sim::SimScene& s) override {
+    if (failBuild_) throw std::runtime_error("out of device memory");
+    inner_.build(s);
+  }
+  void updateFabric(const sim::GarmentId& g, const std::vector<FabricPhysical>& f) override { inner_.updateFabric(g, f); }
+  void setPhase(const sim::GarmentId& g, sim::SimPhase p) override { inner_.setPhase(g, p); }
+  void step(const sim::StepInput& in) override {
+    if (stepsLeft_-- <= 0) throw std::runtime_error("command buffer failed");
+    inner_.step(in);
+  }
+  void readPositions(std::span<Vec3f> out) const override { inner_.readPositions(out); }
+  sim::SimStats stats() const override { return inner_.stats(); }
+  sim::Snapshot snapshot() const override { return inner_.snapshot(); }
+  void restore(const sim::Snapshot& s) override { inner_.restore(s); }
+  sim::ParticleRange range(const sim::GarmentId& g) const override { return inner_.range(g); }
+  std::size_t particleCount() const override { return inner_.particleCount(); }
+
+ private:
+  sim::CpuSolver inner_;
+  bool failBuild_;
+  int stepsLeft_;
+};
+
+SimConfig gpuDraft() {
+  SimConfig c = cpuDraft();
+  c.backend = sim::SolverBackend::Metal;
+  return c;
+}
+
 }  // namespace
 
 TEST(PositionExchange, LatestSinceFrame) {
@@ -197,3 +230,42 @@ TEST(SimController, FallsBackToCpuWhenGpuUnavailable) {
   EXPECT_EQ(s.message.rfind("GPU unavailable", 0), 0u) << s.message;
 }
 #endif
+
+TEST(SimController, GpuBuildFailureFallsBackToCpu) {
+  SimController c(gpuDraft(), [](sim::SolverBackend b) -> std::unique_ptr<sim::Solver> {
+    if (b != sim::SolverBackend::Cpu) return std::make_unique<Faulty>(true, 0);
+    return std::make_unique<sim::CpuSolver>();
+  });
+  PublishedFrame f;
+  ASSERT_TRUE(waitFor([&] { return c.exchange().latest(f, 0); }, 60s));
+  const SimStatus s = c.status();
+  EXPECT_EQ(s.backend, sim::SolverBackend::Cpu);
+  EXPECT_FALSE(s.gpuAvailable);
+  EXPECT_EQ(s.message, "GPU unavailable: out of device memory; using CPU");
+}
+
+TEST(SimController, GpuFaultMidDrapeRedoesOnCpu) {
+  SimController c(gpuDraft(), [](sim::SolverBackend b) -> std::unique_ptr<sim::Solver> {
+    if (b != sim::SolverBackend::Cpu) return std::make_unique<Faulty>(false, 3);
+    return std::make_unique<sim::CpuSolver>();
+  });
+  PublishedFrame f;
+  ASSERT_TRUE(waitFor([&] { return c.exchange().latest(f, 0) && f.revision == 2; }, 60s));
+  SimStatus s = c.status();
+  EXPECT_EQ(s.backend, sim::SolverBackend::Cpu);
+  EXPECT_FALSE(s.gpuAvailable);
+  EXPECT_EQ(s.message, "GPU failed: command buffer failed; using CPU");
+  c.reset();  // later drapes stay on the CPU
+  ASSERT_TRUE(waitFor([&] { return c.exchange().latest(f, 0) && f.revision == 3; }, 60s));
+  s = c.status();
+  EXPECT_EQ(s.backend, sim::SolverBackend::Cpu);
+  EXPECT_EQ(s.message, "GPU failed: command buffer failed; using CPU");
+}
+
+TEST(SimController, CpuFaultFailsWithMessage) {
+  SimController c(cpuDraft(), [](sim::SolverBackend) { return std::make_unique<Faulty>(false, 2); });
+  ASSERT_TRUE(waitFor([&] { return c.status().state == sim::DrapeState::Failed; }, 60s));
+  EXPECT_EQ(c.status().message, "command buffer failed");
+  EXPECT_TRUE(waitFor([&] { return !c.status().running; }, 10s));
+  EXPECT_EQ(c.status().fps, 0);
+}

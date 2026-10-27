@@ -117,8 +117,10 @@ void MainWindow::refreshStatus() {
 
 void MainWindow::fatal(const QString& component, const QString& message) {
   statusTimer_.stop();
-  QMessageBox::critical(this, "Drape", component + ": " + message);
-  QApplication::exit(1);
+  // The self-test reports failures itself and must never wait on a modal.
+  if (!selftest_) QMessageBox::critical(this, "Drape", component + ": " + message);
+  // Deferred: the renderer can fail inside window.show(), before app.exec() runs, where exit() would be a no-op.
+  QTimer::singleShot(0, qApp, [] { QApplication::exit(1); });
 }
 
 }  // namespace drape::app

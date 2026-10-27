@@ -29,6 +29,7 @@ TEST(TeeBenchmark, GpuFasterThanCpuAtStandard) {
       const auto start = std::chrono::steady_clock::now();
       const DrapeResult r = drapeToRest(*solver, {"tee"}, o);
       const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+      EXPECT_TRUE(r.settled) << backendName(b) << " did not settle; its time is not comparable";
       wall[{static_cast<int>(q), static_cast<int>(b)}] = seconds;
       std::printf("bench backend=%s quality=%s wall_s=%.2f sim_s=%.2f frames=%d particles=%zu settled=%d\n",
                   std::string(backendName(b)).c_str(), qualityName[static_cast<int>(q)], seconds, r.simulatedSeconds,

@@ -38,7 +38,8 @@ struct SimStatus {
   bool gpuAvailable = true;    // false once a GPU backend failed to start
 };
 
-// Runs the tee drape on its own thread (spec Phase B 4.3). Commands are queued; a rebuild request supersedes any
+// Runs the tee drape on its own thread (spec Phase B 4.3). A GPU backend that fails to start or faults mid-drape
+// falls back to the CPU with a note in status().message. Commands are queued; a rebuild request supersedes any
 // earlier one still pending. After each frame the thread publishes positions to exchange(); it sleeps once the drape
 // has finished or while paused. The destructor stops the thread at the next frame boundary and joins it.
 class SimController {
@@ -60,6 +61,7 @@ class SimController {
   void loop();
   void rebuild(const SimConfig& config);
   void publish();
+  void stepFailed(const std::string& what);  // a frame threw: fall back to the CPU, or fail on the CPU
 
   SolverFactory factory_;
   PositionExchange exchange_;
@@ -78,6 +80,7 @@ class SimController {
   std::unique_ptr<sim::DrapeSession> session_;
   std::uint64_t revision_ = 0, frame_ = 0;
   std::string gpuNote_;  // the first GPU failure, kept for later CPU drapes
+  sim::SolverBackend backend_ = sim::SolverBackend::Cpu;  // the backend of the current drape
   std::deque<std::chrono::steady_clock::time_point> frameTimes_;
 
   std::thread thread_;  // last: starts after everything above is constructed

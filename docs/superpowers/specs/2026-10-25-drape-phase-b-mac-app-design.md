@@ -1,7 +1,7 @@
 # Drape — Mac App Shell (Phase B) Design
 
 **Date:** 2026-10-25
-**Status:** Approved 2026-10-25; amended during execution (parity scenes and long-run tolerance, Section 7.2, 2026-10-26)
+**Status:** Approved 2026-10-25; amended during execution (parity scenes and long-run tolerance, Section 7.2, 2026-10-26; tolerance statistic revised and Qt via aqtinstall, 2026-10-27)
 **Amends:** `2026-10-01-drape-milestone-1-design.md` Sections 3.4, 13.1 and 17 (amendments listed in Section 10)
 **Builds on:** Phase A (foundations) and Phase A2 (mannequins), `main` at `af4e333`
 

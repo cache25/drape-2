@@ -63,6 +63,7 @@ void SimController::loop() {
       auto ready = [&] { return stop_ || rebuildPending_ || (running_ && session_ && !session_->finished()); };
       if (!ready()) {
         status_.running = false;  // the thread is going to sleep: no frame runs until it is woken
+        status_.fps = 0;
         wake_.wait(lock, ready);
       }
       if (stop_) return;
@@ -77,7 +78,13 @@ void SimController::loop() {
       rebuild(config);
       continue;
     }
-    const sim::DrapeState state = session_->advance();
+    sim::DrapeState state;
+    try {
+      state = session_->advance();
+    } catch (const std::exception& e) {
+      stepFailed(e.what());
+      continue;
+    }
     const auto now = Clock::now();
     frameTimes_.push_back(now);
     while (!frameTimes_.empty() && now - frameTimes_.front() > std::chrono::seconds(1)) frameTimes_.pop_front();
@@ -101,6 +108,7 @@ void SimController::rebuild(const SimConfig& config) {
     scene_ = makeTeeScene(config.body, config.quality, config.size, config.mannequinDir);
     try {
       solver_ = factory_(backend);
+      solver_->build(scene_->scene);  // GPU buffer allocation can fail here too
     } catch (const std::exception& e) {
       if (backend == sim::SolverBackend::Cpu) throw;
       message = std::string("GPU unavailable: ") + e.what() + "; using CPU";
@@ -108,8 +116,8 @@ void SimController::rebuild(const SimConfig& config) {
       gpuAvailable = false;
       backend = sim::SolverBackend::Cpu;
       solver_ = factory_(backend);
+      solver_->build(scene_->scene);
     }
-    solver_->build(scene_->scene);
     sim::DrapeOptions options;
     options.substeps = sim::substepsFor(config.quality);
     options.iterations = sim::iterationsFor(config.quality);
@@ -139,8 +147,32 @@ void SimController::rebuild(const SimConfig& config) {
     status_.backend = backend;
     if (!gpuAvailable) status_.gpuAvailable = false;
   }
+  backend_ = backend;
   ++revision_;
   publish();
+}
+
+void SimController::stepFailed(const std::string& what) {
+  if (backend_ != sim::SolverBackend::Cpu) {
+    // A GPU fault mid-drape (command buffer error, device reset): redo the drape on the CPU, and keep later drapes
+    // there, rather than ending the session.
+    gpuNote_ = "GPU failed: " + what + "; using CPU";
+    SimConfig config;
+    {
+      std::lock_guard lock(mutex_);
+      config_.backend = sim::SolverBackend::Cpu;
+      config = config_;
+      status_.gpuAvailable = false;
+    }
+    rebuild(config);
+    return;
+  }
+  session_.reset();  // nothing left to advance; the thread sleeps until the next rebuild
+  frameTimes_.clear();
+  std::lock_guard lock(mutex_);
+  status_.state = sim::DrapeState::Failed;
+  status_.fps = 0;
+  status_.message = what;
 }
 
 void SimController::publish() {

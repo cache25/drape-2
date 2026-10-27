@@ -89,6 +89,20 @@ constant_or_static uint kReduceRr = 3;     // rr = sum
 constant_or_static uint kReduceRzNew = 4;  // beta = sum (the new rz, consumed by CgBeta)
 constant_or_static uint kReduceBlock = 256;
 
+// Checked by both compilers: a layout that drifts between C++ and MSL fails the build or the runtime Metal compile.
+static_assert(sizeof(GpuStretch) == 48, "GpuStretch layout");
+static_assert(sizeof(GpuHinge) == 32, "GpuHinge layout");
+static_assert(sizeof(GpuSeam) == 16, "GpuSeam layout");
+static_assert(sizeof(GpuFabric) == 48, "GpuFabric layout");
+static_assert(sizeof(GpuGarment) == 16, "GpuGarment layout");
+static_assert(sizeof(Block3) == 48, "Block3 layout");
+static_assert(sizeof(FieldInfo) == 48, "FieldInfo layout");
+static_assert(sizeof(CgScalars) == 32, "CgScalars layout");
+static_assert(sizeof(StepParams) == 96, "StepParams layout");
+static_assert(sizeof(GpuParticle) == 16, "GpuParticle layout");
+static_assert(sizeof(GpuContact) == 32, "GpuContact layout");
+static_assert(sizeof(ReduceSpec) == 16, "ReduceSpec layout");
+
 inline Mat3 loadBlock(Block3 b) { return Mat3{xyz(b.c0), xyz(b.c1), xyz(b.c2)}; }
 inline Block3 storeBlock(Mat3 m) { return Block3{make4(m.c0, 0.0f), make4(m.c1, 0.0f), make4(m.c2, 0.0f)}; }
 

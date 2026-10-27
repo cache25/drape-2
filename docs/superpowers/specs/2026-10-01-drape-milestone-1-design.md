@@ -139,7 +139,7 @@ All are cleared for closed-source commercial use.
 
 | Component | Use | License |
 |---|---|---|
-| Qt 6 (6.12 from Homebrew during development) | UI framework | LGPL v3 (dynamically linked); commercial license later |
+| Qt 6 (6.12 during development: Homebrew, or the official build via aqtinstall) | UI framework | LGPL v3 (dynamically linked); commercial license later |
 | Filament (v1.78.1 prebuilt macOS release) | Real-time physically based renderer with a cloth shading model, Metal backend | Apache 2.0 |
 | metal-cpp | Apple's official C++ bindings for Metal | Apache 2.0 |
 | MakeHuman base mesh, shape targets, skeleton | Avatar | CC0 |
@@ -576,7 +576,7 @@ Before milestone 1 is called done, two designers who have not seen Drape before 
 ### 13.1 Toolchain
 
 - C++20, CMake with presets, Ninja.
-- Source dependencies pinned to exact versions via CMake FetchContent: nlohmann/json v3.12.0, miniz 3.1.0, GoogleTest v1.17.0, CDT 1.4.5. Eigen 3.4 comes from the system package manager (apt on Linux, Homebrew on Mac). Qt comes from Homebrew (`qtbase`, 6.12) during development; the shipping build may move to the official LTS. Filament comes from its official prebuilt macOS release, pinned to v1.78.1.
+- Source dependencies pinned to exact versions via CMake FetchContent: nlohmann/json v3.12.0, miniz 3.1.0, GoogleTest v1.17.0, CDT 1.4.5. Eigen 3.4 comes from the system package manager (apt on Linux, Homebrew on Mac). Qt 6.12 comes from Homebrew (`qtbase`) or the official build installed with aqtinstall during development; the shipping build may move to the official LTS. Filament comes from its official prebuilt macOS release, pinned to v1.78.1.
 - **Targets:** macOS 14+ on arm64 for the app. Linux x86-64 for the portable modules (development and CI only).
 
 ### 13.2 Workflow

@@ -1,6 +1,7 @@
 #include "self_test.hpp"
 
 #include <QApplication>
+#include <QTimer>
 
 #include <cstdio>
 #include <exception>
@@ -22,7 +23,7 @@ SelfTest::SelfTest(MainWindow& window, std::filesystem::path png, const QElapsed
   connect(&window_.viewport(), &ViewportWidget::rendererFailed, this, [](const QString& why) {
     std::printf("renderer failed: %s\n", why.toStdString().c_str());
     std::fflush(stdout);
-    QApplication::exit(1);
+    QTimer::singleShot(0, qApp, [] { QApplication::exit(1); });  // may fire before app.exec() runs
   });
   connect(&pollTimer_, &QTimer::timeout, this, [this] { poll(); });
   pollTimer_.start(50);
