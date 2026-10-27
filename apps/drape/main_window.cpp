@@ -102,8 +102,10 @@ void MainWindow::refreshStatus() {
   if (!s.gpuAvailable) {
     auto* model = qobject_cast<QStandardItemModel*>(solver_->model());
     if (model && model->item(0)->isEnabled()) {
-      model->item(0)->setEnabled(false);
+      // Block first: disabling the current item can move the selection, and a stray currentIndexChanged would
+      // rebuild the drape a second time.
       const QSignalBlocker block(solver_);
+      model->item(0)->setEnabled(false);
       solver_->setCurrentIndex(1);
     }
   }

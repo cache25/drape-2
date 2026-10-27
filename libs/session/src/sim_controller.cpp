@@ -104,6 +104,7 @@ void SimController::rebuild(const SimConfig& config) {
     } catch (const std::exception& e) {
       if (backend == sim::SolverBackend::Cpu) throw;
       message = std::string("GPU unavailable: ") + e.what() + "; using CPU";
+      gpuNote_ = message;
       gpuAvailable = false;
       backend = sim::SolverBackend::Cpu;
       solver_ = factory_(backend);
@@ -125,16 +126,21 @@ void SimController::rebuild(const SimConfig& config) {
     status_.backend = backend;
     return;
   }
+  // Once the GPU has failed, the note stays up on every later CPU drape, so the reason is never lost.
+  if (message.empty() && backend == sim::SolverBackend::Cpu) message = gpuNote_;
+  {
+    // Status first, then the frame: a reader that sees the new revision also sees its status.
+    std::lock_guard lock(mutex_);
+    status_.state = session_->state();
+    status_.particles = solver_->particleCount();
+    status_.fps = 0;
+    status_.simulatedSeconds = 0;
+    status_.message = message;
+    status_.backend = backend;
+    if (!gpuAvailable) status_.gpuAvailable = false;
+  }
   ++revision_;
   publish();
-  std::lock_guard lock(mutex_);
-  status_.state = session_->state();
-  status_.particles = solver_->particleCount();
-  status_.fps = 0;
-  status_.simulatedSeconds = 0;
-  status_.message = message;
-  status_.backend = backend;
-  if (!gpuAvailable) status_.gpuAvailable = false;
 }
 
 void SimController::publish() {

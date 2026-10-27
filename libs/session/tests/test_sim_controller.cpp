@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 
@@ -164,6 +165,24 @@ TEST(SimController, FailureStopsAndReportsMessage) {
   std::this_thread::sleep_for(300ms);
   ASSERT_TRUE(c.exchange().latest(f, 0));
   EXPECT_EQ(f.frame, frozen);
+}
+
+TEST(SimController, FallbackNoteSurvivesCpuRebuild) {
+  SimConfig cfg = cpuDraft();
+  cfg.backend = sim::SolverBackend::Metal;
+  auto factory = [](sim::SolverBackend b) -> std::unique_ptr<sim::Solver> {
+    if (b != sim::SolverBackend::Cpu) throw std::runtime_error("no device");
+    return std::make_unique<sim::CpuSolver>();
+  };
+  SimController c(cfg, factory);
+  PublishedFrame f;
+  ASSERT_TRUE(waitFor([&] { return c.exchange().latest(f, 0) && f.revision == 1; }, 60s));
+  c.configure(cpuDraft());  // the app switches its Solver menu to CPU once the GPU fails
+  ASSERT_TRUE(waitFor([&] { return c.exchange().latest(f, 0) && f.revision == 2; }, 60s));
+  const SimStatus s = c.status();
+  EXPECT_EQ(s.backend, sim::SolverBackend::Cpu);
+  EXPECT_FALSE(s.gpuAvailable);
+  EXPECT_EQ(s.message, "GPU unavailable: no device; using CPU");
 }
 
 #if !defined(__APPLE__)

@@ -77,6 +77,7 @@ class SimController {
   std::unique_ptr<sim::Solver> solver_;
   std::unique_ptr<sim::DrapeSession> session_;
   std::uint64_t revision_ = 0, frame_ = 0;
+  std::string gpuNote_;  // the first GPU failure, kept for later CPU drapes
   std::deque<std::chrono::steady_clock::time_point> frameTimes_;
 
   std::thread thread_;  // last: starts after everything above is constructed
