@@ -23,6 +23,14 @@ scripts/test-mac.sh             # every test but perf; --release runs the perf g
 The build downloads metal-cpp, the prebuilt Filament release and a CC0 studio HDRI into the build folder (pinned and
 SHA-256 checked). Compiler temp files go to `build/tmp`. Without Qt everything except the app builds.
 
+No room on the system drive for Homebrew Qt? Install the official Qt next to the repo instead, and `build-mac.sh`
+finds it (or point `DRAPE_QT_DIR` at any `<version>/macos` folder):
+
+```
+python3 -m venv ../tools/aqt-venv && ../tools/aqt-venv/bin/pip install aqtinstall
+../tools/aqt-venv/bin/aqt install-qt mac desktop 6.12.0 clang_64 --outputdir ../tools/qt
+```
+
 ## Mac app
 
 `scripts/build-mac.sh` builds `build/mac/apps/drape/Drape.app`; open it from Finder or with

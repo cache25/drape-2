@@ -7,6 +7,7 @@ set -uo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 export TMPDIR="$repo/build/tmp"
 mkdir -p "$TMPDIR"
+export xcrun_db="$TMPDIR/xcrun_db"  # xcrun's lookup cache, otherwise in /var/folders on the system drive
 cd "$repo"
 fail() { echo "FAILED: $1"; exit 1; }
 if [[ "${1:-}" == "--release" ]]; then

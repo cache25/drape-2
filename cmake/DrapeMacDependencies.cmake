@@ -51,11 +51,11 @@ set(DRAPE_HDRI ${DRAPE_MAC_DEPS}/studio_small_09_2k.hdr)
 drape_fetch_file(https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/studio_small_09_2k.hdr
                  36724313c0fc66dab126ff90f081b85a0b1ef47be65eda1417bd20b033f0573f ${DRAPE_HDRI})
 
-# Qt 6.12 Widgets for the app (Homebrew qtbase/qt). Optional: without it everything but the app builds.
+# Qt 6.12 Widgets for the app (Homebrew qtbase/qt, or aqtinstall Qt via scripts/build-mac.sh). Optional: without it everything but the app builds.
 find_package(Qt6 6.12 COMPONENTS Widgets QUIET)
 if(Qt6_FOUND)
   set(DRAPE_HAVE_QT ON)
 else()
   set(DRAPE_HAVE_QT OFF)
-  message(WARNING "Qt 6.12 (Widgets) not found: the Drape app is not built. Install Homebrew qtbase.")
+  message(WARNING "Qt 6.12 (Widgets) not found: the Drape app is not built. Install Homebrew qtbase, or see README (aqtinstall).")
 endif()

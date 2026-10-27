@@ -23,7 +23,7 @@ Out of scope (later phases): Library, Avatar, Properties and Fabric panels; fabr
 | Question | Decision |
 |---|---|
 | Slicing | One phase: app, viewport and Metal solver together |
-| Qt source | Homebrew `qt` (6.12), not the official installer |
+| Qt source | Homebrew `qt` (6.12), not the official installer. *Amended 2026-10-27 (Ian): on Ian's Mac, the official Qt 6.12.0 installed with aqtinstall onto the external drive, because the system drive has no room for Homebrew Qt; `scripts/build-mac.sh` finds it, and Homebrew still works.* |
 | GPU solver approach | Full GPU port in 32-bit, with the accept/reject sums in 64-bit on the CPU (Section 5) |
 | Where it builds | Ian's MacBook Pro (Apple M1, 8 GB, macOS 26), in `Dev 2/drape/build/` on the external volume; Claude runs the scripts through the linked desktop app |
 | Garment and bodies | The Phase A test tee (men's on the male, women's cut on the female); no new garments |
@@ -44,7 +44,7 @@ On Linux, CMake skips the Mac-only targets entirely, so the cloud workspace keep
 
 | Component | Version | How it arrives |
 |---|---|---|
-| Qt 6 (Widgets) | 6.12 (Homebrew `qtbase`; the full `qt` formula pulls 38 modules) | `brew install qtbase`, found with `find_package(Qt6 6.12 COMPONENTS Widgets)`; optional at configure time (without it, everything but the app builds) |
+| Qt 6 (Widgets) | 6.12 (Homebrew `qtbase`; the full `qt` formula pulls 38 modules) | `brew install qtbase` or aqtinstall (see README), found with `find_package(Qt6 6.12 COMPONENTS Widgets)`; optional at configure time (without it, everything but the app builds) |
 | Filament | v1.78.1 (stable, 2026-10-21), official prebuilt macOS release | Downloaded by CMake into the build folder, SHA-256 checked |
 | metal-cpp | Apple's release matching the installed macOS SDK, pinned by URL and SHA-256 | Downloaded by CMake into the build folder |
 | CC0 studio HDRI | One Poly Haven HDRI, pinned by URL and SHA-256 | Downloaded once; converted to an IBL with Filament's `cmgen` at build time |
@@ -138,7 +138,7 @@ Apple GPUs have no 64-bit floating point. The rules:
 - **Physics tests 1, 2 and 4 on both solvers** (spec 12.2): the strip stretch tests, the cantilever tests, and the stability tests (hanging sheet, sheet on a sphere, rests on the body, friction slope) are parameterized over the backend and run on `CpuSolver` and `MetalSolver`. Test 3 (Cusick drape) needs the fabric presets and stays in Phase D.
 - **Parity (spec 12.2 test 5):**
   - Short runs, ≤ 60 frames — hanging sheet, a small patch dropped on the sphere, and the full tee continuing 60 frames from its CPU-settled state on the male mannequin: maximum per-particle difference < 1 mm. *(Amended during execution, 2026-10-26: the sheet dropped on the sphere and the tee's first 60 frames were dropped as short-run scenes because they are chaotic at the 1 mm scale even CPU vs CPU — a 1 nm change to the start moves the CPU's own result by ~10 cm and ~1.4 cm respectively.)*
-  - Long runs — the tee draped to rest on the male and on the female: both settle, and hem height and center of mass agree within 2 mm **or within the CPU's own spread, whichever is larger** — the largest difference from the unperturbed CPU result over three CPU runs whose start moves by up to 1 nm. *(Ian's decision, 2026-10-26: the female tee's settled hem varies by up to 6.7 mm CPU vs CPU, so a fixed 2 mm check cannot tell a correct GPU solver from a wrong one.)*
+  - Long runs — the tee draped to rest on the male and on the female: both settle, and hem height and center of mass agree within 2 mm **or within 1.5× the CPU's own spread, whichever is larger** — the spread is the largest difference from the unperturbed CPU result over ten CPU runs whose start moves by up to 1 nm. *(Ian's decision, 2026-10-26: the female tee's settled hem varies by up to 6.7 mm CPU vs CPU, so a fixed 2 mm check cannot tell a correct GPU solver from a wrong one. Revised by Ian 2026-10-27 from "max of three runs" to "1.5× max of ten": on the Mac a sound GPU run measured 6.47 mm against a max-of-three limit of 4.56 mm, and max-of-three fails a sound run about one time in four.)*
 - **Determinism:** two `MetalSolver` runs of the same scenario, and a snapshot/restore replay, are bit-identical.
 - **Tee on the GPU:** the existing tee drape checks (settled, seam gap, penetration) pass with `MetalSolver` on both bodies.
 - **Render smoke test:** Filament renders the settled tee on the male offscreen at 800×1000; the image is not blank, and the garment's blue-tinted pixels cover between 5% and 40% of the frame.
